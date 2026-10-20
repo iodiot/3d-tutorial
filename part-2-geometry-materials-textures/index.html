@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Three.js from Scratch, Part 2: Geometry, Materials and Textures — Mike Smahin</title>
+<meta name="description" content="What a mesh is made of: vertices, normals and UVs inside a BufferGeometry, how the built-in materials react to light, and how to load textures without washed-out colours. With diagrams, screenshots and a live demo.">
+<link rel="canonical" href="https://iodiot.github.io/3d-tutorial/part-2-geometry-materials-textures/">
+<meta property="og:title" content="Three.js from Scratch, Part 2: Geometry, Materials and Textures — Mike Smahin">
+<meta property="og:description" content="What a mesh is made of: vertices, normals and UVs inside a BufferGeometry, how the built-in materials react to light, and how to load textures without washed-out colours. With diagrams, screenshots and a live demo.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d12'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' text-anchor='middle' fill='%237cf5d4'%3E3D%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/3d-tutorial/assets/style.css?v=1">
+</head>
+<body>
+<div class="bg"></div>
+<header class="nav">
+  <a class="brand" href="/">Mike Smahin</a>
+  <nav>
+    <a href="/3d-tutorial/">3D Tutorial</a>
+    <a href="/blog/">Blog</a>
+    <a href="/">Portfolio</a>
+  </nav>
+</header>
+<main>
+<article class="post">
+  <header class="post-head">
+    <p class="eyebrow"><a href="/3d-tutorial/">← Three.js from Scratch · all parts</a></p>
+    <h1>Three.js from Scratch, Part 2: Geometry, Materials and Textures</h1>
+    <p class="meta-line"><time datetime="2026-10-20">Oct 20, 2026</time> · Mike Smahin</p>
+    <ul class="tags"><li class="topic">part 2</li><li>three.js</li><li>webgl</li><li>materials</li><li>textures</li></ul>
+  </header>
+  <div class="prose"><p>In <a href="/3d-tutorial/part-1-first-scene/">Part 1</a> we built a scene, a camera, a renderer and a lit cube that you can drag around. The cube looked like a cube, but its surface was one flat colour. In this article we open the mesh up and look at what it is made of: the numbers inside a geometry, how the different materials turn light into colour, and how to put an image on a surface without it coming out pale and washed out.</p>
+<p>We keep the scene from Part 1 (same camera, same two lights, same <code>OrbitControls</code>) and change what is inside it. By the end, the cube and the floor are covered in tiles that catch the light along their edges. The panel in the corner switches each texture on and off, so you can see what every one of them adds:</p>
+<div class="demo">
+  <iframe src="/3d-tutorial/demos/part-2/" title="Live demo: a tiled cube on a tiled floor, with a panel to toggle the colour, normal and roughness maps" loading="lazy"></iframe>
+</div>
+<p class="demo-links"><a href="/3d-tutorial/demos/part-2/" target="_blank" rel="noopener">Open the demo full screen ↗</a> · <a href="https://github.com/iodiot/3d-tutorial/tree/main/demos/part-2" target="_blank" rel="noopener">Source on GitHub ↗</a></p>
+<blockquote>
+<p>As in Part 1, everything here uses Three.js <strong>r186</strong> (npm version <code>0.186.1</code>) through the same import map. Every step below is a single HTML file you can open from the repo.</p>
+</blockquote>
+<h2>What a mesh is made of</h2>
+<p>Quick reminder from Part 1: a <code>Mesh</code> is a <strong>geometry</strong> (the shape) plus a <strong>material</strong> (how the surface looks). The mesh itself only adds a position, rotation and scale in the scene graph.</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> cube = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(
+  <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BoxGeometry</span>(<span class="hljs-number">1.4</span>, <span class="hljs-number">1.4</span>, <span class="hljs-number">1.4</span>),
+  <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0x3fc8a8</span> })
+);
+</code></pre>
+<p>That one statement hides a lot. <code>BoxGeometry</code> generated a few arrays of numbers. <code>MeshStandardMaterial</code> picked a shader program that turns those numbers, the lights and the camera into pixels. Let's look at both halves, starting with the numbers.</p>
+<h2>Inside a geometry: BufferGeometry</h2>
+<p>Every geometry in Three.js is a <code>BufferGeometry</code>. <code>BoxGeometry</code>, <code>SphereGeometry</code> and the rest are just <code>BufferGeometry</code> subclasses that fill in the arrays for you. Those arrays are called <strong>attributes</strong>, and each one stores one value per vertex:</p>
+<ul>
+<li><code>position</code>: where the vertex is, three numbers (x, y, z).</li>
+<li><code>normal</code>: which way the surface faces at that vertex, three numbers. Lighting depends on it.</li>
+<li><code>uv</code>: which point of a texture belongs to this vertex, two numbers. More on these below.</li>
+<li>optionally <code>color</code>, and anything else you want to feed to a shader.</li>
+</ul>
+<p>On top of the attributes, an <strong>index</strong> says which vertices make up each triangle. The GPU draws every surface as triangles; a square is two of them.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-2/buffer-geometry.svg" alt="Diagram: a square made of four numbered vertices and two triangles, next to a table of its attributes. position holds x, y, z per vertex, normal holds 0, 0, 1 for every vertex, uv holds 0 0, 1 0, 0 1 and 1 1, an optional color attribute has red, green, blue and yellow, and the index is 0, 1, 2, 2, 1, 3." width="880" height="460" loading="lazy">
+  <figcaption>A square as the GPU sees it: four vertices, a few flat arrays of numbers, and an index that groups the vertices into two triangles.</figcaption>
+</figure>
+<h3>Building a quad by hand</h3>
+<p>The best way to see this is to build a geometry yourself. Here is exactly the square from the diagram:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> geometry = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BufferGeometry</span>();
+
+<span class="hljs-keyword">const</span> positions = <span class="hljs-keyword">new</span> <span class="hljs-title class_">Float32Array</span>([
+  -<span class="hljs-number">1</span>, -<span class="hljs-number">1</span>, <span class="hljs-number">0</span>,  <span class="hljs-comment">// 0: bottom left</span>
+   <span class="hljs-number">1</span>, -<span class="hljs-number">1</span>, <span class="hljs-number">0</span>,  <span class="hljs-comment">// 1: bottom right</span>
+  -<span class="hljs-number">1</span>,  <span class="hljs-number">1</span>, <span class="hljs-number">0</span>,  <span class="hljs-comment">// 2: top left</span>
+   <span class="hljs-number">1</span>,  <span class="hljs-number">1</span>, <span class="hljs-number">0</span>,  <span class="hljs-comment">// 3: top right</span>
+]);
+<span class="hljs-keyword">const</span> normals = <span class="hljs-keyword">new</span> <span class="hljs-title class_">Float32Array</span>([
+  <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>,
+  <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>,
+  <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>,
+  <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>,
+]);
+<span class="hljs-keyword">const</span> uvs = <span class="hljs-keyword">new</span> <span class="hljs-title class_">Float32Array</span>([
+  <span class="hljs-number">0</span>, <span class="hljs-number">0</span>,
+  <span class="hljs-number">1</span>, <span class="hljs-number">0</span>,
+  <span class="hljs-number">0</span>, <span class="hljs-number">1</span>,
+  <span class="hljs-number">1</span>, <span class="hljs-number">1</span>,
+]);
+<span class="hljs-keyword">const</span> colors = <span class="hljs-keyword">new</span> <span class="hljs-title class_">Float32Array</span>([
+  <span class="hljs-number">1.0</span>, <span class="hljs-number">0.25</span>, <span class="hljs-number">0.3</span>,  <span class="hljs-comment">// red</span>
+  <span class="hljs-number">0.2</span>, <span class="hljs-number">0.9</span>, <span class="hljs-number">0.5</span>,   <span class="hljs-comment">// green</span>
+  <span class="hljs-number">0.25</span>, <span class="hljs-number">0.45</span>, <span class="hljs-number">1.0</span>, <span class="hljs-comment">// blue</span>
+  <span class="hljs-number">1.0</span>, <span class="hljs-number">0.8</span>, <span class="hljs-number">0.15</span>,  <span class="hljs-comment">// yellow</span>
+]);
+
+geometry.<span class="hljs-title function_">setAttribute</span>(<span class="hljs-string">&#x27;position&#x27;</span>, <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BufferAttribute</span>(positions, <span class="hljs-number">3</span>));
+geometry.<span class="hljs-title function_">setAttribute</span>(<span class="hljs-string">&#x27;normal&#x27;</span>, <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BufferAttribute</span>(normals, <span class="hljs-number">3</span>));
+geometry.<span class="hljs-title function_">setAttribute</span>(<span class="hljs-string">&#x27;uv&#x27;</span>, <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BufferAttribute</span>(uvs, <span class="hljs-number">2</span>));
+geometry.<span class="hljs-title function_">setAttribute</span>(<span class="hljs-string">&#x27;color&#x27;</span>, <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BufferAttribute</span>(colors, <span class="hljs-number">3</span>));
+geometry.<span class="hljs-title function_">setIndex</span>([<span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">2</span>, <span class="hljs-number">1</span>, <span class="hljs-number">3</span>]);
+
+<span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({
+  <span class="hljs-attr">vertexColors</span>: <span class="hljs-literal">true</span>,
+  <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.6</span>,
+  <span class="hljs-attr">side</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">DoubleSide</span>,
+});
+<span class="hljs-keyword">const</span> quad = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(geometry, material);
+scene.<span class="hljs-title function_">add</span>(quad);
+</code></pre>
+<p>A few things to notice:</p>
+<ul>
+<li>Each attribute is a flat <code>Float32Array</code>. The second argument of <code>BufferAttribute</code> is the <strong>item size</strong>: how many numbers belong to one vertex. Three for positions and normals, two for UVs.</li>
+<li>The normals all point along +Z, straight out of the square towards the camera.</li>
+<li><code>vertexColors: true</code> tells the material to use the <code>color</code> attribute. Each vertex has its own colour, and the GPU blends them smoothly across each triangle. The same blending (called <strong>interpolation</strong>) happens to every attribute, and we will rely on it for normals and UVs too.</li>
+<li>The order of the vertices in each triangle matters. Seen from the front, both triangles go <strong>counter-clockwise</strong>, and that is how Three.js decides which side is the front. By default only the front side is drawn (this is called back-face culling), so I set <code>side: THREE.DoubleSide</code> to see the quad from behind as well.</li>
+</ul>
+<p>To show the two triangles, the demo draws the same geometry a second time on top, as a wireframe:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> wire = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(geometry, <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshBasicMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0xffffff</span>, <span class="hljs-attr">wireframe</span>: <span class="hljs-literal">true</span> }));
+quad.<span class="hljs-title function_">add</span>(wire);
+</code></pre>
+<p>The wireframe is a child of the quad, so it follows the quad when it rotates. That is the scene graph from Part 1 at work.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-2/step-1-quad.webp" alt="Screenshot: a square, slightly turned, with a red bottom-left corner, a green bottom-right corner, a blue top-left corner and a yellow top-right corner, the colours blending across it. A thin white diagonal line splits it into two triangles." width="960" height="600" loading="lazy">
+  <figcaption>Step 1: four vertices with four colours, blended across two triangles. The white diagonal is the shared edge. (<a href="/3d-tutorial/demos/part-2/step-1.html" target="_blank" rel="noopener">step-1.html</a>)</figcaption>
+</figure>
+<p>In real projects you rarely type vertices by hand. They come from built-in geometries or from model files (that is Part 3). But when something looks wrong, knowing that it is all &quot;a few arrays and an index&quot; makes debugging much easier.</p>
+<h3>Why a cube has 24 vertices, not 8</h3>
+<p>Try this in the console of any scene with our cube:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> box = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BoxGeometry</span>(<span class="hljs-number">1.4</span>, <span class="hljs-number">1.4</span>, <span class="hljs-number">1.4</span>);
+<span class="hljs-variable language_">console</span>.<span class="hljs-title function_">log</span>(box.<span class="hljs-property">attributes</span>.<span class="hljs-property">position</span>.<span class="hljs-property">count</span>); <span class="hljs-comment">// 24</span>
+<span class="hljs-variable language_">console</span>.<span class="hljs-title function_">log</span>(box.<span class="hljs-property">index</span>.<span class="hljs-property">count</span> / <span class="hljs-number">3</span>);           <span class="hljs-comment">// 12 triangles</span>
+</code></pre>
+<p>A cube has 8 corners, so why 24 vertices? Because a vertex is not just a position. It is a position <strong>plus</strong> a normal <strong>plus</strong> a UV. Each corner of a cube touches three faces that point in three different directions, so it needs three normals, and therefore three separate vertices. Six faces with four vertices each gives 24.</p>
+<p>This is the key to the next section.</p>
+<h2>Normals: flat and smooth</h2>
+<p>The lights from Part 1 work by comparing each surface's <strong>normal</strong> (the direction it faces) with the direction of the light. Facing the light: bright. Facing away: dark. Normals are what turn a silhouette into a shape.</p>
+<p>There are two ways to give a curved object its normals:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-2/normals.svg" alt="Diagram: the same bent line drawn twice. On the left, flat normals: every segment has its own perpendicular arrows and vertices are not shared. On the right, smooth normals: each shared vertex has one arrow, pointing halfway between the two segments it joins." width="880" height="400" loading="lazy">
+  <figcaption>Flat normals give every face its own direction. Smooth normals average the faces around each shared vertex.</figcaption>
+</figure>
+<ul>
+<li><strong>Flat</strong>: every triangle has its own vertices, and all three get the triangle's normal. Light changes in a jump at every edge, and you see the facets. This is what the cube wants: its edges are supposed to be sharp.</li>
+<li><strong>Smooth</strong>: neighbouring triangles share vertices, and each shared vertex gets the average of the normals around it. Because the GPU interpolates normals across every triangle, light changes gradually, and a sphere made of a few hundred triangles looks perfectly round.</li>
+</ul>
+<p>Here is the same sphere with both kinds of normals. <code>SphereGeometry</code> comes with smooth normals. To get flat ones, I give every triangle its own copy of its vertices with <code>toNonIndexed()</code>, then let Three.js recompute the normals:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">VertexNormalsHelper</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/helpers/VertexNormalsHelper.js&#x27;</span>;
+
+<span class="hljs-keyword">const</span> smoothGeometry = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">SphereGeometry</span>(<span class="hljs-number">0.9</span>, <span class="hljs-number">16</span>, <span class="hljs-number">10</span>);
+
+<span class="hljs-keyword">const</span> flatGeometry = smoothGeometry.<span class="hljs-title function_">toNonIndexed</span>();
+flatGeometry.<span class="hljs-title function_">computeVertexNormals</span>();
+
+<span class="hljs-keyword">const</span> flat = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(flatGeometry, material);
+<span class="hljs-keyword">const</span> smooth = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(smoothGeometry, material);
+
+<span class="hljs-comment">// Draw every normal as a short yellow line</span>
+scene.<span class="hljs-title function_">add</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">VertexNormalsHelper</span>(flat, <span class="hljs-number">0.18</span>, <span class="hljs-number">0xf2cc60</span>));
+scene.<span class="hljs-title function_">add</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">VertexNormalsHelper</span>(smooth, <span class="hljs-number">0.18</span>, <span class="hljs-number">0xf2cc60</span>));
+</code></pre>
+<p><code>computeVertexNormals()</code> averages the normals of the triangles that share each vertex. When no vertex is shared, there is nothing to average, so each vertex simply gets its own triangle's normal. That is all &quot;flat&quot; means. <code>VertexNormalsHelper</code> draws each normal as a line, which is a great debugging tool. If it moves with the mesh, call <code>helper.update()</code> every frame.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-2/step-2-normals.webp" alt="Screenshot: two teal spheres with short yellow lines sticking out of them. The left sphere is visibly faceted and has many lines in small clusters, labelled flat, 864 vertices. The right one looks round and has fewer, evenly spaced lines, labelled smooth, 187 vertices." width="960" height="600" loading="lazy">
+  <figcaption>Step 2: the same 16 × 10 sphere with flat normals (left) and smooth normals (right). The yellow lines are the normals. (<a href="/3d-tutorial/demos/part-2/step-2.html" target="_blank" rel="noopener">step-2.html</a>)</figcaption>
+</figure>
+<p>Note the vertex counts in the labels: 864 against 187, for exactly the same shape. Flat shading costs vertices. If you just want the faceted look and do not care about the data, there is a shortcut: <code>new THREE.MeshStandardMaterial({ flatShading: true })</code> computes a flat normal per pixel in the shader and keeps the geometry as it is.</p>
+<h3>The built-in geometries</h3>
+<p>Three.js ships with a good set of shapes. The ones you will use most:</p>
+<ul>
+<li><code>BoxGeometry(width, height, depth)</code></li>
+<li><code>SphereGeometry(radius, widthSegments, heightSegments)</code></li>
+<li><code>PlaneGeometry(width, height)</code>, a flat rectangle facing +Z. Rotate it by <code>-Math.PI / 2</code> around X to make a floor.</li>
+<li><code>CylinderGeometry</code>, <code>ConeGeometry</code>, <code>TorusGeometry</code>, <code>TorusKnotGeometry</code>, <code>CapsuleGeometry</code>, <code>IcosahedronGeometry</code>.</li>
+</ul>
+<p>Most take <strong>segment</strong> counts. More segments mean a smoother curve and more vertices. For a sphere that fills the screen, 64 × 32 is plenty; for a small one in the distance, 16 × 8 is often enough. Segments also matter on flat shapes when something moves the vertices later, like a waving flag or a terrain.</p>
+<h2>Materials: from Basic to Physical</h2>
+<p>Now the other half of the mesh. A material is, under the hood, a shader program plus the settings it reads. Three.js has a family of built-in materials, and each one does more work per pixel than the previous one:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Material</th>
+<th style="text-align:left">Reacts to light</th>
+<th style="text-align:left">Good for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><code>MeshBasicMaterial</code></td>
+<td style="text-align:left">No, flat colour</td>
+<td style="text-align:left">UI in 3D, debugging, unlit effects</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>MeshLambertMaterial</code></td>
+<td style="text-align:left">Diffuse only, no highlights</td>
+<td style="text-align:left">Matte surfaces, low-end devices</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>MeshPhongMaterial</code></td>
+<td style="text-align:left">Diffuse and a specular highlight</td>
+<td style="text-align:left">Shiny plastic look, cheaper than PBR</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>MeshStandardMaterial</code></td>
+<td style="text-align:left">Physically based (PBR)</td>
+<td style="text-align:left">The default for almost everything</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>MeshPhysicalMaterial</code></td>
+<td style="text-align:left">PBR plus clearcoat, transmission, sheen and more</td>
+<td style="text-align:left">Car paint, glass, fabric</td>
+</tr>
+</tbody>
+</table>
+<p>Here they all are with the same colour under the same two lights from Part 1:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> color = <span class="hljs-number">0x3fc8a8</span>;
+<span class="hljs-keyword">const</span> materials = [
+  <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshBasicMaterial</span>({ color }),
+  <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshLambertMaterial</span>({ color }),
+  <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshPhongMaterial</span>({ color, <span class="hljs-attr">shininess</span>: <span class="hljs-number">60</span> }),
+  <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ color, <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.35</span> }),
+  <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshPhysicalMaterial</span>({ color, <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.6</span>, <span class="hljs-attr">clearcoat</span>: <span class="hljs-number">1</span>, <span class="hljs-attr">clearcoatRoughness</span>: <span class="hljs-number">0.05</span> }),
+];
+
+<span class="hljs-keyword">const</span> geometry = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">SphereGeometry</span>(<span class="hljs-number">0.6</span>, <span class="hljs-number">64</span>, <span class="hljs-number">32</span>); <span class="hljs-comment">// one geometry, shared by all five</span>
+materials.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">material, i</span>) =&gt;</span> {
+  <span class="hljs-keyword">const</span> mesh = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(geometry, material);
+  mesh.<span class="hljs-property">position</span>.<span class="hljs-property">x</span> = (i - <span class="hljs-number">2</span>) * <span class="hljs-number">1.55</span>;
+  scene.<span class="hljs-title function_">add</span>(mesh);
+});
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-2/step-3-materials.webp" alt="Screenshot: five teal spheres in a row, labelled Basic, Lambert, Phong, Standard and Physical. Basic is a flat disc of colour. Lambert is shaded but matte. Phong has a soft highlight. Standard has a tighter, brighter highlight. Physical is rougher but has a small, sharp clearcoat highlight on top." width="960" height="600" loading="lazy">
+  <figcaption>Step 3: five materials, one colour, one set of lights. (<a href="/3d-tutorial/demos/part-2/step-3.html" target="_blank" rel="noopener">step-3.html</a>)</figcaption>
+</figure>
+<p>The Physical sphere is a nice example of what the extra features do. Its base is fairly rough (<code>roughness: 0.6</code>), but <code>clearcoat</code> adds a thin, glossy layer on top, like varnish on wood or lacquer on a car. That is where the small, sharp highlight comes from.</p>
+<p>(The labels in these demos are plain HTML elements positioned in 3D with the <code>CSS2DRenderer</code> addon. It is a handy tool, but not the topic today, so I will not go into it.)</p>
+<p>My advice: start with <code>MeshStandardMaterial</code> and only move away from it with a reason. It looks right under any lighting, its parameters mean the same thing as in Blender and other 3D tools, and models in glTF format use exactly this material model.</p>
+<h3>Roughness and metalness</h3>
+<p><code>MeshStandardMaterial</code> has two main knobs besides colour:</p>
+<ul>
+<li><strong>roughness</strong> from <code>0</code> (a mirror-smooth surface, sharp reflections) to <code>1</code> (completely matte, light scatters in every direction). The default is <code>1</code>.</li>
+<li><strong>metalness</strong>, which should almost always be <code>0</code> (plastic, wood, stone, skin) or <code>1</code> (metal). Values in between are mostly useful for transitions, like rust on steel. The default is <code>0</code>.</li>
+</ul>
+<p>In Part 1 I hinted that a metallic surface with no environment looks very dark. Here is why. A metal has no diffuse colour at all: everything you see on it is a <strong>reflection</strong>. In a scene with only a directional light and an ambient light, there is almost nothing to reflect. The light itself is a single point of brightness, and <code>AmbientLight</code> does not show up in reflections at all.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-2/step-4-no-environment.webp" alt="Screenshot: two rows of five spheres labelled with roughness from 0 to 1. The top row, metalness 0, is teal with highlights that get wider and softer to the right. The bottom row, metalness 1, is almost black, with only a small bright spot on the smooth spheres and some dark teal shading on the rough ones." width="960" height="600" loading="lazy">
+  <figcaption>Step 4a: roughness from 0 to 1, metalness 0 (top) and 1 (bottom), lit only by the lights from Part 1. The metals are nearly black. (<a href="/3d-tutorial/demos/part-2/step-4.html?env=0" target="_blank" rel="noopener">step-4.html?env=0</a>)</figcaption>
+</figure>
+<p>Metals need something around them to reflect. Proper environment lighting is a big part of Part 3, but here is a preview, because it only takes three lines. <code>RoomEnvironment</code> is a simple virtual room with a few bright panels, and <code>PMREMGenerator</code> turns it into a texture that materials can read reflections from, already blurred for every roughness level:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">RoomEnvironment</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/environments/RoomEnvironment.js&#x27;</span>;
+
+<span class="hljs-keyword">const</span> pmrem = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PMREMGenerator</span>(renderer);
+scene.<span class="hljs-property">environment</span> = pmrem.<span class="hljs-title function_">fromScene</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">RoomEnvironment</span>(), <span class="hljs-number">0.04</span>).<span class="hljs-property">texture</span>;
+scene.<span class="hljs-property">environmentIntensity</span> = <span class="hljs-number">0.3</span>;
+</code></pre>
+<p><code>scene.environment</code> lights every <code>MeshStandardMaterial</code> and <code>MeshPhysicalMaterial</code> in the scene. It also replaces the job of the <code>AmbientLight</code>, so I removed the ambient light in this version.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-2/step-4-roughness-metalness.webp" alt="Screenshot: the same two rows of spheres with an environment. The metal spheres now show reflections of a room's bright panels: mirror-sharp at roughness 0, blurrier and blurrier to the right, fully matte at roughness 1." width="960" height="600" loading="lazy">
+  <figcaption>Step 4b: the same spheres with a <code>RoomEnvironment</code>. Smooth metals now show sharp reflections; as roughness goes up, the reflections blur. (<a href="/3d-tutorial/demos/part-2/step-4.html" target="_blank" rel="noopener">step-4.html</a>)</figcaption>
+</figure>
+<h2>UV coordinates: where the texture goes</h2>
+<p>So far every surface has had one colour. To paint an image onto a surface, the GPU needs to know which pixel of the image belongs to each point of the mesh. That is what the <code>uv</code> attribute is for.</p>
+<p><strong>UV coordinates</strong> describe a point in a texture. <code>u</code> goes left to right, <code>v</code> goes bottom to top, and both run from <code>0</code> to <code>1</code> no matter how many pixels the image has. In Three.js, <code>(0, 0)</code> is the bottom-left corner of the image and <code>(1, 1)</code> the top-right. (Three.js flips images vertically on upload, because <code>texture.flipY</code> is <code>true</code> by default. That is why it is not the top-left corner, as in CSS.)</p>
+<figure>
+  <img src="/3d-tutorial/images/part-2/uv-mapping.svg" alt="Diagram: on the left, a checkered texture with the letter F, its u axis pointing right and v axis pointing up, corners labelled (0, 0) at the bottom left to (1, 1) at the top right. An arrow labelled uv attribute points to the same texture stretched onto a tilted quad, whose corners are labelled with the same uv values." width="880" height="420" loading="lazy">
+  <figcaption>Each vertex stores a UV coordinate. The GPU interpolates it across the triangle and looks up the texture at that point.</figcaption>
+</figure>
+<p>Look back at the UVs of our hand-made quad: <code>0 0</code>, <code>1 0</code>, <code>0 1</code>, <code>1 1</code>, one per corner. That maps the whole image onto the whole square. The built-in geometries come with sensible UVs: a plane gets the full image, every face of a box gets the full image, and a sphere wraps it around like a world map.</p>
+<p>The best way to check UVs is a <strong>UV test texture</strong>: a grid where every cell is labelled, so you can see at a glance what is stretched, flipped or repeated. Here is one on a plane, a box and a sphere:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> loader = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">TextureLoader</span>();
+<span class="hljs-keyword">const</span> uvGrid = loader.<span class="hljs-title function_">load</span>(<span class="hljs-string">&#x27;textures/uv-grid.png&#x27;</span>);
+uvGrid.<span class="hljs-property">colorSpace</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">SRGBColorSpace</span>; <span class="hljs-comment">// explained in the next section</span>
+
+<span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">map</span>: uvGrid, <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.6</span> });
+
+<span class="hljs-keyword">const</span> plane = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PlaneGeometry</span>(<span class="hljs-number">1.4</span>, <span class="hljs-number">1.4</span>), material);
+<span class="hljs-keyword">const</span> box = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BoxGeometry</span>(<span class="hljs-number">1.2</span>, <span class="hljs-number">1.2</span>, <span class="hljs-number">1.2</span>), material);
+<span class="hljs-keyword">const</span> sphere = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">SphereGeometry</span>(<span class="hljs-number">0.75</span>, <span class="hljs-number">64</span>, <span class="hljs-number">32</span>), material);
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-2/step-5-uv-grid.webp" alt="Screenshot: a colourful labelled grid texture on a flat square, on a cube where every face shows the complete grid, and on a sphere where the grid wraps around like a world map with cells squeezed together towards the pole." width="960" height="600" loading="lazy">
+  <figcaption>Step 5: one UV test texture on three built-in geometries. Every box face gets the whole image; the sphere squeezes it towards the poles. Cell A1, with the white frame, is the (0, 0) corner. (<a href="/3d-tutorial/demos/part-2/step-5.html" target="_blank" rel="noopener">step-5.html</a>)</figcaption>
+</figure>
+<p>A few things about <code>TextureLoader</code>:</p>
+<ul>
+<li><code>load()</code> returns a <code>Texture</code> <strong>immediately</strong>, while the image is still downloading. You can put it on a material straight away; Three.js uploads the image to the GPU when it arrives. Until then the surface is drawn black, usually for only a frame or two. If you need to wait, use <code>await loader.loadAsync(url)</code>.</li>
+<li>The <code>map</code> property of a material is the <strong>colour texture</strong> (sometimes called albedo, diffuse or base colour map). The texture's colour is multiplied by <code>material.color</code>, which is white by default.</li>
+<li>Like geometries, one texture can be shared by any number of materials, and one material by any number of meshes. The step above has three meshes, one material and one texture.</li>
+</ul>
+<p>There is one line in that code I have not explained yet, and it is the most important one in the article.</p>
+<h2>Colour spaces, or why your texture looks washed out</h2>
+<p>Here is the same tile texture on two cubes. The only difference is one line of code:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-comment">// Left: the colour texture with no colour space set (the default)</span>
+<span class="hljs-keyword">const</span> wrong = loader.<span class="hljs-title function_">load</span>(<span class="hljs-string">&#x27;textures/tiles-color.jpg&#x27;</span>);
+
+<span class="hljs-comment">// Right: the same file, tagged as sRGB</span>
+<span class="hljs-keyword">const</span> right = loader.<span class="hljs-title function_">load</span>(<span class="hljs-string">&#x27;textures/tiles-color.jpg&#x27;</span>);
+right.<span class="hljs-property">colorSpace</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">SRGBColorSpace</span>;
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-2/step-6-color-space.webp" alt="Screenshot: two cubes with the same terracotta tile texture. The left cube, labelled no colour space, washed out, looks pale and pinkish with little contrast between its faces. The right cube, labelled SRGBColorSpace, correct, has deep terracotta tiles and a clearly darker shaded side." width="960" height="600" loading="lazy">
+  <figcaption>Step 6: the same JPEG with no colour space (left) and with <code>SRGBColorSpace</code> (right). (<a href="/3d-tutorial/demos/part-2/step-6.html" target="_blank" rel="noopener">step-6.html</a>)</figcaption>
+</figure>
+<p>The left one is what most people get the first time they load a texture, and it is the colour space story I promised at the end of Part 1.</p>
+<p>Image files do not store brightness in a straight line. A pixel value of 128 is not half as bright as 255; it is about a fifth as bright. JPEGs, PNGs and your screen all use an encoding called <strong>sRGB</strong>, which spends more of the available values on dark tones, because our eyes are better at telling dark tones apart.</p>
+<p>Lighting maths, on the other hand, only works on <strong>linear</strong> values, where twice the number means twice the light. &quot;Add the light from the sun to the ambient light&quot; and &quot;multiply by the surface colour&quot; are only correct in linear space.</p>
+<p>So a correct renderer does two conversions, one on the way in and one on the way out:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-2/color-space.svg" alt="Diagram of two pipelines. Correct: an sRGB texture file is decoded to linear because colorSpace is SRGBColorSpace, lighting is computed in linear values, and outputColorSpace, sRGB by default, encodes the result for the screen. Colour space not set: the sRGB numbers are used as if they were linear, lighting runs on values that are too high, and the result is encoded again, which makes it pale and washed out." width="1000" height="380" loading="lazy">
+  <figcaption>Decode on the way in, encode on the way out. If you skip the first step, the output step still runs, and the colours get brightened twice.</figcaption>
+</figure>
+<ul>
+<li><strong>On the way out</strong>, <code>renderer.outputColorSpace</code> is <code>SRGBColorSpace</code> by default, so Three.js always encodes the final image for the screen. You do not need to touch it.</li>
+<li><strong>On the way in</strong>, Three.js has to know that a texture holds sRGB colours. It cannot guess this from the file, so a new texture has no colour space (<code>NoColorSpace</code>) and is used as is. Setting <code>texture.colorSpace = THREE.SRGBColorSpace</code> makes the GPU decode it to linear before lighting.</li>
+</ul>
+<p>Skip the input step, and sRGB values are treated as if they were linear. They are too high, especially in the dark tones, and then the output step brightens them a second time. That is the pale, low-contrast look on the left cube.</p>
+<p>The rule to remember:</p>
+<ul>
+<li><strong>Colour textures</strong> are sRGB: <code>map</code>, <code>emissiveMap</code>, and the colour maps of the physical material (<code>sheenColorMap</code>, <code>specularColorMap</code>). Set <code>colorSpace = THREE.SRGBColorSpace</code> on them.</li>
+<li><strong>Data textures</strong> are linear: <code>normalMap</code>, <code>roughnessMap</code>, <code>metalnessMap</code>, <code>aoMap</code>, <code>bumpMap</code>, <code>displacementMap</code>, <code>alphaMap</code>. Their pixels are not colours but numbers, so leave them alone.</li>
+</ul>
+<p>What about <code>color: 0x3fc8a8</code> in the material? Three.js handles that one for you. Colours you pass as hex numbers or CSS strings are treated as sRGB and converted automatically, so they match the colour picker in your design tool. The one exception is raw numbers in a <code>color</code> vertex attribute, like in our quad: those go straight to the GPU and count as linear.</p>
+<blockquote>
+<p>If you read older tutorials you will see <code>texture.encoding = THREE.sRGBEncoding</code> and <code>renderer.outputEncoding</code>. Those are the old names for the same thing: they were deprecated in r152 and have since been removed. The modern versions are <code>texture.colorSpace</code> and <code>renderer.outputColorSpace</code>.</p>
+</blockquote>
+<h2>Wrapping, repeat and filtering</h2>
+<p>A floor 10 metres wide with one tile image stretched over it would give us tiles the size of a car. We want the image to <strong>repeat</strong>.</p>
+<p><code>texture.repeat</code> scales the UV coordinates: with <code>repeat.set(5, 5)</code>, UVs that used to run from 0 to 1 now run from 0 to 5. What happens outside the 0 to 1 range is decided by the <strong>wrap mode</strong>, set separately for each direction: <code>wrapS</code> for u and <code>wrapT</code> for v.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-2/wrapping.svg" alt="Diagram: the same small image with a letter F, a yellow top edge and a blue right edge, repeated 3 by 2 with each wrap mode. ClampToEdgeWrapping shows the image once in the bottom-left corner and stretches its yellow top row upwards and its blue right column to the right. RepeatWrapping shows six identical copies. MirroredRepeatWrapping shows six copies, every other one flipped, so the edges meet." width="880" height="340" loading="lazy">
+  <figcaption>The three wrap modes, all with <code>repeat.set(3, 2)</code>.</figcaption>
+</figure>
+<p>The default, <code>ClampToEdgeWrapping</code>, is the reason &quot;I set repeat and nothing happened&quot; is such a common question: outside 0 to 1, it just smears the last row and column of pixels. For a tiling texture you want <code>RepeatWrapping</code>:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> floorTexture = loader.<span class="hljs-title function_">load</span>(<span class="hljs-string">&#x27;textures/tiles-color.jpg&#x27;</span>);
+floorTexture.<span class="hljs-property">colorSpace</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">SRGBColorSpace</span>;
+floorTexture.<span class="hljs-property">wrapS</span> = floorTexture.<span class="hljs-property">wrapT</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">RepeatWrapping</span>;
+floorTexture.<span class="hljs-property">repeat</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">5</span>, <span class="hljs-number">5</span>);
+</code></pre>
+<p>Two more texture settings decide how sharp a texture looks on screen:</p>
+<ul>
+<li><strong>Mipmaps and filtering.</strong> When a texture is far away, many of its pixels land on one screen pixel. To avoid shimmering, the GPU keeps smaller, pre-blurred copies of the texture (mipmaps) and picks the right one. Three.js generates mipmaps for you, and the default filters (<code>LinearMipmapLinearFilter</code> for minification, <code>LinearFilter</code> for magnification) are good. For pixel art, set <code>magFilter</code> to <code>THREE.NearestFilter</code>.</li>
+<li><strong>Anisotropic filtering.</strong> A floor seen at a low angle gets blurry in the distance, because mipmaps blur equally in both directions. Anisotropic filtering samples the texture more cleverly at grazing angles. Ask the renderer for its maximum and use it on textures you see at an angle:</li>
+</ul>
+<pre class="hljs"><code class="language-js">floorTexture.<span class="hljs-property">anisotropy</span> = renderer.<span class="hljs-property">capabilities</span>.<span class="hljs-title function_">getMaxAnisotropy</span>();
+</code></pre>
+<p>It costs a little GPU time, which is why it is not on by default. On a floor, the difference is obvious.</p>
+<h2>More maps: normal and roughness</h2>
+<p>A colour map changes the colour of a surface, but the lighting still treats it as perfectly flat. Real tiles have grooves between them, and the grout is matte while the glaze is shiny. Two more textures take care of that:</p>
+<ul>
+<li>A <strong>normal map</strong> stores a normal direction in every pixel, as RGB: red for x, green for y, blue for z. That is why normal maps look light blue: most pixels point straight out of the surface, <code>(0, 0, 1)</code>. The shader uses them to bend the interpolated vertex normal at every pixel, so light catches the bevelled edge of every tile, even though the cube is still 12 flat triangles.</li>
+<li>A <strong>roughness map</strong> stores roughness per pixel: dark is smooth, light is rough. Three.js reads it from the <strong>green</strong> channel and multiplies it by <code>material.roughness</code>, so set <code>roughness: 1</code> to use the map as it is. (A metalness map works the same way, from the <strong>blue</strong> channel.)</li>
+</ul>
+<p>Both are data textures, so no <code>colorSpace</code> for them. All three maps for one mesh look like this:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> maxAnisotropy = renderer.<span class="hljs-property">capabilities</span>.<span class="hljs-title function_">getMaxAnisotropy</span>();
+
+<span class="hljs-keyword">function</span> <span class="hljs-title function_">loadTiles</span>(<span class="hljs-params">repeat</span>) {
+  <span class="hljs-keyword">const</span> map = loader.<span class="hljs-title function_">load</span>(<span class="hljs-string">&#x27;textures/tiles-color.jpg&#x27;</span>);
+  map.<span class="hljs-property">colorSpace</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">SRGBColorSpace</span>;        <span class="hljs-comment">// colour data: sRGB</span>
+  <span class="hljs-keyword">const</span> normalMap = loader.<span class="hljs-title function_">load</span>(<span class="hljs-string">&#x27;textures/tiles-normal.png&#x27;</span>);
+  <span class="hljs-keyword">const</span> roughnessMap = loader.<span class="hljs-title function_">load</span>(<span class="hljs-string">&#x27;textures/tiles-roughness.jpg&#x27;</span>);
+  <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> t <span class="hljs-keyword">of</span> [map, normalMap, roughnessMap]) {   <span class="hljs-comment">// data maps stay linear</span>
+    t.<span class="hljs-property">wrapS</span> = t.<span class="hljs-property">wrapT</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">RepeatWrapping</span>;
+    t.<span class="hljs-property">repeat</span>.<span class="hljs-title function_">set</span>(repeat, repeat);
+    t.<span class="hljs-property">anisotropy</span> = maxAnisotropy;
+  }
+  <span class="hljs-keyword">return</span> { map, normalMap, roughnessMap };
+}
+
+<span class="hljs-keyword">const</span> cubeMaterial = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ ...<span class="hljs-title function_">loadTiles</span>(<span class="hljs-number">1</span>), <span class="hljs-attr">roughness</span>: <span class="hljs-number">1</span> });
+<span class="hljs-keyword">const</span> floorMaterial = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ ...<span class="hljs-title function_">loadTiles</span>(<span class="hljs-number">5</span>), <span class="hljs-attr">roughness</span>: <span class="hljs-number">1</span> });
+</code></pre>
+<p>Why a function that loads the files again, instead of sharing one set of textures? Because <code>repeat</code> and the wrap mode are properties of the texture object, and the cube and the floor need different repeats. The browser caches the image files, so the second load does not download anything again.</p>
+<p>Normal maps come in two conventions, often called OpenGL (green points up) and DirectX (green points down). Three.js expects OpenGL. If the bumps in a downloaded texture look lit from the wrong side, flip the green channel with <code>material.normalScale.y = -1</code>. <code>normalScale</code> is also how you make the effect stronger or weaker.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-2/step-7-final.webp" alt="Screenshot of the final demo: a cube covered in terracotta tiles, four by four per face, standing on a large floor of the same tiles, repeated many times. Light grout lines with bevelled edges are visible on both. A small control panel in the top-right corner has checkboxes for colour map, sRGB colour space, normal map, roughness map, wireframe and spin, and a floor repeat slider." width="960" height="600" loading="lazy">
+  <figcaption>The final demo: colour, normal and roughness maps on the cube and the floor. Use the panel to switch each one off and see what it adds.</figcaption>
+</figure>
+<p>The panel is <a href="https://lil-gui.georgealways.com/" target="_blank" rel="noopener">lil-gui</a>, which ships with Three.js as an addon. Two details in its handlers are worth knowing:</p>
+<ul>
+<li>Changing a texture's <code>colorSpace</code> after it has been uploaded needs <code>texture.needsUpdate = true</code>, so the texture is uploaded again.</li>
+<li>Adding or removing a map on a material needs <code>material.needsUpdate = true</code>, because Three.js compiles a different shader for &quot;with a normal map&quot; and &quot;without&quot;.</li>
+</ul>
+<p>Changing <code>repeat</code>, <code>color</code> or <code>roughness</code> needs neither: those are just values passed to the shader every frame.</p>
+<p>One more change in the final demo: the cube's rotation now comes from a <code>THREE.Timer</code>. In Part 1 we computed the angle from the timestamp directly. That stops working once you can pause, because the cube would jump when you un-pause. Adding up the time between frames (<code>timer.getDelta()</code>, in seconds) keeps the motion frame-rate independent and lets the &quot;spin&quot; checkbox stop it cleanly.</p>
+<h2>Sharing and cleaning up</h2>
+<p>Geometries, materials and textures all hold GPU memory, and JavaScript's garbage collector cannot free it for you. Two habits keep this under control:</p>
+<ul>
+<li><strong>Share.</strong> Five meshes with the same shape should use one geometry; a hundred trees can use one material. It saves memory and upload time, and the GPU has less state to switch between draw calls.</li>
+<li><strong>Dispose.</strong> When you remove something from the scene for good, free its GPU resources explicitly:</li>
+</ul>
+<pre class="hljs"><code class="language-js">scene.<span class="hljs-title function_">remove</span>(mesh);
+mesh.<span class="hljs-property">geometry</span>.<span class="hljs-title function_">dispose</span>();
+mesh.<span class="hljs-property">material</span>.<span class="hljs-title function_">dispose</span>();
+mesh.<span class="hljs-property">material</span>.<span class="hljs-property">map</span>?.<span class="hljs-title function_">dispose</span>(); <span class="hljs-comment">// and any other textures it uses</span>
+</code></pre>
+<p>Only dispose things nothing else uses. <code>renderer.info.memory</code> tells you how many geometries and textures are currently on the GPU, which is a quick way to spot a leak.</p>
+<h2>The full code</h2>
+<p>Here is the final demo in one file. It is the same code as the <a href="/3d-tutorial/demos/part-2/">live demo</a>. This time it needs its textures: download the <a href="https://github.com/iodiot/3d-tutorial/tree/main/demos/part-2/textures" target="_blank" rel="noopener">textures folder</a> from the repo, put it next to <code>index.html</code>, and serve the folder as in Part 1 (<code>npx serve .</code> or <code>python3 -m http.server</code>).</p>
+<pre class="hljs"><code class="language-html"><span class="hljs-meta">&lt;!doctype <span class="hljs-keyword">html</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">html</span> <span class="hljs-attr">lang</span>=<span class="hljs-string">&quot;en&quot;</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">head</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">charset</span>=<span class="hljs-string">&quot;utf-8&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">name</span>=<span class="hljs-string">&quot;viewport&quot;</span> <span class="hljs-attr">content</span>=<span class="hljs-string">&quot;width=device-width, initial-scale=1&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">title</span>&gt;</span>Geometry, materials and textures · final demo<span class="hljs-tag">&lt;/<span class="hljs-name">title</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">style</span>&gt;</span><span class="language-css">
+    <span class="hljs-selector-tag">html</span>, <span class="hljs-selector-tag">body</span> { <span class="hljs-attribute">margin</span>: <span class="hljs-number">0</span>; <span class="hljs-attribute">height</span>: <span class="hljs-number">100%</span>; <span class="hljs-attribute">background</span>: <span class="hljs-number">#000</span>; }
+    <span class="hljs-selector-tag">canvas</span> { <span class="hljs-attribute">display</span>: block; }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">style</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;importmap&quot;</span>&gt;</span><span class="language-javascript">
+    {
+      <span class="hljs-string">&quot;imports&quot;</span>: {
+        <span class="hljs-string">&quot;three&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js&quot;</span>,
+        <span class="hljs-string">&quot;three/addons/&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/&quot;</span>
+      }
+    }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">head</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">body</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;module&quot;</span>&gt;</span><span class="language-javascript">
+    <span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">OrbitControls</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/controls/OrbitControls.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> <span class="hljs-variable constant_">GUI</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/libs/lil-gui.module.min.js&#x27;</span>;
+
+    <span class="hljs-comment">// Scene and camera</span>
+    <span class="hljs-keyword">const</span> scene = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Scene</span>();
+    scene.<span class="hljs-property">background</span> = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-number">0x1b1f2a</span>);
+
+    <span class="hljs-keyword">const</span> camera = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PerspectiveCamera</span>(<span class="hljs-number">60</span>, innerWidth / innerHeight, <span class="hljs-number">0.1</span>, <span class="hljs-number">100</span>);
+    camera.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">1.5</span>, <span class="hljs-number">4</span>);
+
+    <span class="hljs-comment">// Renderer</span>
+    <span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGLRenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span> });
+    renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+    renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    <span class="hljs-variable language_">document</span>.<span class="hljs-property">body</span>.<span class="hljs-title function_">appendChild</span>(renderer.<span class="hljs-property">domElement</span>);
+
+    <span class="hljs-comment">// Textures: one set of tile maps, loaded once per mesh that needs its own repeat</span>
+    <span class="hljs-keyword">const</span> loader = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">TextureLoader</span>();
+    <span class="hljs-keyword">const</span> maxAnisotropy = renderer.<span class="hljs-property">capabilities</span>.<span class="hljs-title function_">getMaxAnisotropy</span>();
+
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">loadTiles</span>(<span class="hljs-params">repeat</span>) {
+      <span class="hljs-keyword">const</span> map = loader.<span class="hljs-title function_">load</span>(<span class="hljs-string">&#x27;textures/tiles-color.jpg&#x27;</span>);
+      map.<span class="hljs-property">colorSpace</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">SRGBColorSpace</span>;        <span class="hljs-comment">// colour data: sRGB</span>
+      <span class="hljs-keyword">const</span> normalMap = loader.<span class="hljs-title function_">load</span>(<span class="hljs-string">&#x27;textures/tiles-normal.png&#x27;</span>);
+      <span class="hljs-keyword">const</span> roughnessMap = loader.<span class="hljs-title function_">load</span>(<span class="hljs-string">&#x27;textures/tiles-roughness.jpg&#x27;</span>);
+      <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> t <span class="hljs-keyword">of</span> [map, normalMap, roughnessMap]) {   <span class="hljs-comment">// data maps stay linear</span>
+        t.<span class="hljs-property">wrapS</span> = t.<span class="hljs-property">wrapT</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">RepeatWrapping</span>;
+        t.<span class="hljs-property">repeat</span>.<span class="hljs-title function_">set</span>(repeat, repeat);
+        t.<span class="hljs-property">anisotropy</span> = maxAnisotropy;
+      }
+      <span class="hljs-keyword">return</span> { map, normalMap, roughnessMap };
+    }
+
+    <span class="hljs-keyword">const</span> cubeMaps = <span class="hljs-title function_">loadTiles</span>(<span class="hljs-number">1</span>);
+    <span class="hljs-keyword">const</span> floorMaps = <span class="hljs-title function_">loadTiles</span>(<span class="hljs-number">5</span>);
+
+    <span class="hljs-comment">// The cube from Part 1, now with a tiled surface</span>
+    <span class="hljs-keyword">const</span> cubeMaterial = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ ...cubeMaps, <span class="hljs-attr">roughness</span>: <span class="hljs-number">1</span> });
+    <span class="hljs-keyword">const</span> cube = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BoxGeometry</span>(<span class="hljs-number">1.4</span>, <span class="hljs-number">1.4</span>, <span class="hljs-number">1.4</span>), cubeMaterial);
+    scene.<span class="hljs-title function_">add</span>(cube);
+
+    <span class="hljs-comment">// A floor made of the same tiles, repeated 5 times in each direction</span>
+    <span class="hljs-keyword">const</span> floorMaterial = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ ...floorMaps, <span class="hljs-attr">roughness</span>: <span class="hljs-number">1</span> });
+    <span class="hljs-keyword">const</span> floor = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PlaneGeometry</span>(<span class="hljs-number">10</span>, <span class="hljs-number">10</span>), floorMaterial);
+    floor.<span class="hljs-property">rotation</span>.<span class="hljs-property">x</span> = -<span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> / <span class="hljs-number">2</span>;
+    floor.<span class="hljs-property">position</span>.<span class="hljs-property">y</span> = -<span class="hljs-number">1.3</span>;
+    scene.<span class="hljs-title function_">add</span>(floor);
+
+    <span class="hljs-comment">// Lights, same as Part 1</span>
+    scene.<span class="hljs-title function_">add</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">AmbientLight</span>(<span class="hljs-number">0xffffff</span>, <span class="hljs-number">0.4</span>));
+    <span class="hljs-keyword">const</span> sun = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">DirectionalLight</span>(<span class="hljs-number">0xffffff</span>, <span class="hljs-number">2.5</span>);
+    sun.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">3</span>, <span class="hljs-number">4</span>, <span class="hljs-number">2</span>);
+    scene.<span class="hljs-title function_">add</span>(sun);
+
+    <span class="hljs-comment">// Orbit controls: drag to rotate, scroll to zoom, right-drag to pan</span>
+    <span class="hljs-keyword">const</span> controls = <span class="hljs-keyword">new</span> <span class="hljs-title class_">OrbitControls</span>(camera, renderer.<span class="hljs-property">domElement</span>);
+    controls.<span class="hljs-property">enableDamping</span> = <span class="hljs-literal">true</span>;
+    controls.<span class="hljs-property">maxPolarAngle</span> = <span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> * <span class="hljs-number">0.48</span>; <span class="hljs-comment">// do not go under the floor</span>
+
+    <span class="hljs-comment">// A small panel to switch things on and off</span>
+    <span class="hljs-keyword">const</span> params = {
+      <span class="hljs-attr">colorMap</span>: <span class="hljs-literal">true</span>,
+      <span class="hljs-attr">srgb</span>: <span class="hljs-literal">true</span>,
+      <span class="hljs-attr">normalMap</span>: <span class="hljs-literal">true</span>,
+      <span class="hljs-attr">roughnessMap</span>: <span class="hljs-literal">true</span>,
+      <span class="hljs-attr">wireframe</span>: <span class="hljs-literal">false</span>,
+      <span class="hljs-attr">floorRepeat</span>: <span class="hljs-number">5</span>,
+      <span class="hljs-attr">spin</span>: <span class="hljs-literal">true</span>,
+    };
+    <span class="hljs-keyword">const</span> materials = [cubeMaterial, floorMaterial];
+    <span class="hljs-keyword">const</span> sets = [cubeMaps, floorMaps];
+
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">applyMaps</span>(<span class="hljs-params"></span>) {
+      materials.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">m, i</span>) =&gt;</span> {
+        m.<span class="hljs-property">map</span> = params.<span class="hljs-property">colorMap</span> ? sets[i].<span class="hljs-property">map</span> : <span class="hljs-literal">null</span>;
+        m.<span class="hljs-property">normalMap</span> = params.<span class="hljs-property">normalMap</span> ? sets[i].<span class="hljs-property">normalMap</span> : <span class="hljs-literal">null</span>;
+        m.<span class="hljs-property">roughnessMap</span> = params.<span class="hljs-property">roughnessMap</span> ? sets[i].<span class="hljs-property">roughnessMap</span> : <span class="hljs-literal">null</span>;
+        m.<span class="hljs-property">roughness</span> = params.<span class="hljs-property">roughnessMap</span> ? <span class="hljs-number">1</span> : <span class="hljs-number">0.45</span>;
+        m.<span class="hljs-property">needsUpdate</span> = <span class="hljs-literal">true</span>; <span class="hljs-comment">// adding or removing a map changes the shader</span>
+      });
+    }
+
+    <span class="hljs-keyword">const</span> gui = <span class="hljs-keyword">new</span> <span class="hljs-title function_">GUI</span>({ <span class="hljs-attr">title</span>: <span class="hljs-string">&#x27;Part 2 controls&#x27;</span> });
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;colorMap&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;colour map&#x27;</span>).<span class="hljs-title function_">onChange</span>(applyMaps);
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;srgb&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;sRGB colour space&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">on</span>) =&gt;</span> {
+      <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> s <span class="hljs-keyword">of</span> sets) {
+        s.<span class="hljs-property">map</span>.<span class="hljs-property">colorSpace</span> = on ? <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">SRGBColorSpace</span> : <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">NoColorSpace</span>;
+        s.<span class="hljs-property">map</span>.<span class="hljs-property">needsUpdate</span> = <span class="hljs-literal">true</span>; <span class="hljs-comment">// the texture must be uploaded again</span>
+      }
+    });
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;normalMap&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;normal map&#x27;</span>).<span class="hljs-title function_">onChange</span>(applyMaps);
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;roughnessMap&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;roughness map&#x27;</span>).<span class="hljs-title function_">onChange</span>(applyMaps);
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;wireframe&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">on</span>) =&gt;</span> { cubeMaterial.<span class="hljs-property">wireframe</span> = on; });
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;floorRepeat&#x27;</span>, <span class="hljs-number">1</span>, <span class="hljs-number">10</span>, <span class="hljs-number">1</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;floor repeat&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">n</span>) =&gt;</span> {
+      <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> t <span class="hljs-keyword">of</span> <span class="hljs-title class_">Object</span>.<span class="hljs-title function_">values</span>(floorMaps)) t.<span class="hljs-property">repeat</span>.<span class="hljs-title function_">set</span>(n, n);
+    });
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;spin&#x27;</span>);
+
+    <span class="hljs-comment">// Keep the canvas sharp and undistorted when the window changes size</span>
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">onResize</span>(<span class="hljs-params"></span>) {
+      camera.<span class="hljs-property">aspect</span> = innerWidth / innerHeight;
+      camera.<span class="hljs-title function_">updateProjectionMatrix</span>();
+      renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+      renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    }
+    <span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;resize&#x27;</span>, onResize);
+
+    <span class="hljs-comment">// Animation loop</span>
+    <span class="hljs-keyword">const</span> timer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Timer</span>();
+    <span class="hljs-keyword">let</span> angle = <span class="hljs-number">0</span>;
+    renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">time</span>) =&gt;</span> {
+      timer.<span class="hljs-title function_">update</span>(time);
+      <span class="hljs-keyword">if</span> (params.<span class="hljs-property">spin</span>) angle += timer.<span class="hljs-title function_">getDelta</span>();
+      cube.<span class="hljs-property">rotation</span>.<span class="hljs-property">x</span> = <span class="hljs-number">0.4</span> + angle * <span class="hljs-number">0.4</span>;
+      cube.<span class="hljs-property">rotation</span>.<span class="hljs-property">y</span> = <span class="hljs-number">0.7</span> + angle * <span class="hljs-number">0.7</span>;
+      controls.<span class="hljs-title function_">update</span>();
+      renderer.<span class="hljs-title function_">render</span>(scene, camera);
+    });
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">body</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">html</span>&gt;</span>
+</code></pre>
+<p>The step-by-step versions are in the repo too: <a href="/3d-tutorial/demos/part-2/step-1.html">step-1.html</a> (the hand-made quad), <a href="/3d-tutorial/demos/part-2/step-2.html">step-2.html</a> (normals), <a href="/3d-tutorial/demos/part-2/step-3.html">step-3.html</a> (materials), <a href="/3d-tutorial/demos/part-2/step-4.html">step-4.html</a> (roughness and metalness), <a href="/3d-tutorial/demos/part-2/step-5.html">step-5.html</a> (UVs) and <a href="/3d-tutorial/demos/part-2/step-6.html">step-6.html</a> (colour space).</p>
+<h2>A few things to try</h2>
+<ul>
+<li>In step 1, change the index to <code>[0, 2, 1, 2, 3, 1]</code> and remove <code>side: THREE.DoubleSide</code>. The quad disappears from the front and shows up from behind: you reversed the winding order.</li>
+<li>In step 2, add <code>flatShading: true</code> to the material and compare it with the non-indexed sphere.</li>
+<li>In the final demo, turn off the sRGB checkbox and watch the tiles fade. Then turn off the normal map and orbit close to the cube: the tile edges go flat.</li>
+<li>Set <code>floor repeat</code> to 1 and zoom in. Then drop the <code>anisotropy</code> line, look at the floor at a low angle, and watch the far tiles blur.</li>
+<li>Replace the tiles with textures from <a href="https://polyhaven.com/textures" target="_blank" rel="noopener">Poly Haven</a> or <a href="https://ambientcg.com/" target="_blank" rel="noopener">ambientCG</a>, both free (CC0). Their downloads include colour, normal (pick the GL version) and roughness maps.</li>
+</ul>
+<h2>Next time</h2>
+<p>We now know what a mesh is made of, and we can make a surface look like a material instead of a colour. But writing vertices by hand only goes so far, and our cube still does not cast a shadow on its own floor. In Part 3 we load real models made in Blender and other tools (glTF, the &quot;JPEG of 3D&quot;), turn on shadows, and light the whole scene with an environment map, the proper version of the <code>RoomEnvironment</code> trick from this article. See you there.</p>
+</div>
+  <nav class="pager"><a href="/3d-tutorial/part-1-first-scene/">← Part 1: Your First Scene</a><span class="soon-next">Next: Part 3, Real models, shadows and environment light (coming soon)</span></nav>
+</article>
+</main>
+<footer class="foot"><p>© Mike Smahin · <a href="https://github.com/iodiot/3d-tutorial" target="_blank" rel="noopener">source on GitHub</a></p></footer>
+</body>
+</html>

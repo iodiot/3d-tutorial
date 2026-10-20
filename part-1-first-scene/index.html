@@ -40,7 +40,7 @@
 <p>Roughly, the plan is:</p>
 <ol>
 <li><strong>Your first scene</strong> (this article): scene, camera, renderer, lights, the render loop.</li>
-<li>Geometry, materials and textures: what a mesh is made of and how surfaces react to light.</li>
+<li><a href="/3d-tutorial/part-2-geometry-materials-textures/">Geometry, materials and textures</a>: what a mesh is made of and how surfaces react to light.</li>
 <li>Loading real models (glTF), shadows and environment lighting.</li>
 <li>Shaders: writing your own GLSL, and what the GPU is actually doing.</li>
 <li>WebGPU: Three.js's <code>WebGPURenderer</code>, the TSL shading language and compute.</li>
@@ -65,7 +65,7 @@
 <h2>Setup</h2>
 <p>You need a page, a <code>&lt;script type=&quot;module&quot;&gt;</code> and a way to import <code>three</code>. There are two common ways to get it.</p>
 <h3>Option A: no build step, import map + CDN</h3>
-<p>This is the fastest way to start. An <a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Element/script/type/importmap" target="_blank" rel="noopener">import map</a> tells the browser where the bare specifier <code>three</code> lives, so your code can <code>import * as THREE from 'three'</code> exactly like it would in a bundled project. The second entry maps <code>three/addons/</code> to the examples folder, where things like <code>OrbitControls</code> live.</p>
+<p>This is the fastest way to start. An <a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/script/type/importmap" target="_blank" rel="noopener">import map</a> tells the browser where the bare specifier <code>three</code> lives, so your code can <code>import * as THREE from 'three'</code> exactly like it would in a bundled project. The second entry maps <code>three/addons/</code> to the examples folder, where things like <code>OrbitControls</code> live.</p>
 <pre class="hljs"><code class="language-html"><span class="hljs-meta">&lt;!doctype <span class="hljs-keyword">html</span>&gt;</span>
 <span class="hljs-tag">&lt;<span class="hljs-name">html</span> <span class="hljs-attr">lang</span>=<span class="hljs-string">&quot;en&quot;</span>&gt;</span>
 <span class="hljs-tag">&lt;<span class="hljs-name">head</span>&gt;</span>
@@ -201,7 +201,7 @@ scene.<span class="hljs-title function_">add</span>(sun);
 </ul>
 <p>About the numbers: since r155, Three.js uses physically based light units by default, so intensities like <code>2.5</code> for a directional light are normal. If you copy code from an old tutorial and everything looks too dark or too bright, this is often why.</p>
 <figure>
-  <img src="/3d-tutorial/images/part-1/step-3-lit-cube.webp" alt="Screenshot: a teal cube lit from the upper right, with two bright faces and one darker face." width="960" height="600" loading="lazy">
+  <img src="/3d-tutorial/images/part-1/step-3-lit-cube.webp" alt="Screenshot: a teal cube lit from the upper right. The faces turned towards the light are bright teal; the side turned away is dark teal, not black." width="960" height="600" loading="lazy">
   <figcaption>Step 3: with a directional light and a little ambient light, the cube finally looks like a cube. (<a href="/3d-tutorial/demos/part-1/step-3.html" target="_blank" rel="noopener">step-3.html</a>)</figcaption>
 </figure>
 <p>Try setting the ambient intensity to <code>0</code> and to <code>2</code>. With <code>0</code>, the side away from the sun goes pitch black. With <code>2</code>, the cube starts to look flat again. Lighting is a balance between the two.</p>
@@ -226,7 +226,7 @@ scene.<span class="hljs-title function_">add</span>(sun);
 <li>It is the standard way to drive <code>WebGPURenderer</code> too, so the same loop works when we switch renderers later.</li>
 <li>You can stop it with <code>renderer.setAnimationLoop(null)</code>.</li>
 </ul>
-<p>The callback receives a timestamp in milliseconds. I use it to compute the rotation directly from time, instead of adding a fixed amount per frame. That keeps the speed the same on a 60 Hz laptop and a 120 Hz phone. If you increment by a constant every frame, the cube spins twice as fast on the 120 Hz screen.</p>
+<p>If you opened <a href="/3d-tutorial/demos/part-1/step-3.html">step-3.html</a> and wondered why the cube was already turning: this is the loop it uses. The callback receives a timestamp in milliseconds. I use it to compute the rotation directly from time, instead of adding a fixed amount per frame. That keeps the speed the same on a 60 Hz laptop and a 120 Hz phone. If you increment by a constant every frame, the cube spins twice as fast on the 120 Hz screen.</p>
 <h2>Resizing and devicePixelRatio</h2>
 <p>Two things go wrong as soon as someone resizes the window or opens your page on a phone.</p>
 <p><strong>The window size changes.</strong> The canvas keeps its old size and the camera keeps its old aspect ratio, so the picture gets stretched or cut off. The fix is to update both:</p>
@@ -253,7 +253,7 @@ controls.<span class="hljs-property">enableDamping</span> = <span class="hljs-li
 <p>The controls point the camera at <code>controls.target</code> (the origin by default), so we no longer need <code>camera.lookAt()</code>. I also added a <code>GridHelper</code> as a floor. Without some reference in the scene, it is hard to tell whether the camera moves or the cube does.</p>
 <figure>
   <img src="/3d-tutorial/images/part-1/step-4-orbit-controls.webp" alt="Screenshot: the teal cube above a grid floor, seen from a different angle after dragging with OrbitControls." width="960" height="600" loading="lazy">
-  <figcaption>Step 4: the final scene after a short drag with OrbitControls. The grid shows that the camera has moved.</figcaption>
+  <figcaption>Step 4: the final scene after a short drag with OrbitControls. The grid shows that the camera has moved. (<a href="/3d-tutorial/demos/part-1/" target="_blank" rel="noopener">the final demo</a>)</figcaption>
 </figure>
 <h2>The full code</h2>
 <p>Here is everything in one file. Save it as <code>index.html</code>, serve the folder, and open it. It is the same code as the <a href="/3d-tutorial/demos/part-1/">live demo</a>.</p>
@@ -345,9 +345,9 @@ controls.<span class="hljs-property">enableDamping</span> = <span class="hljs-li
 <li>Set <code>fov</code> to <code>20</code>, then to <code>110</code>, and move the camera to compensate.</li>
 </ul>
 <h2>Next time</h2>
-<p>Our cube is lit, but its surface is a single flat colour. In the next article we look at what a mesh is really made of: the vertices, normals and UVs inside a geometry, how the different materials react to light, and how to put a texture on a surface without it looking washed out (there is a colour space story here). See you there.</p>
+<p>Our cube is lit, but its surface is a single flat colour. In <a href="/3d-tutorial/part-2-geometry-materials-textures/">the next article</a> we look at what a mesh is really made of: the vertices, normals and UVs inside a geometry, how the different materials react to light, and how to put a texture on a surface without it looking washed out (there is a colour space story here). See you there.</p>
 </div>
-  <nav class="pager"><a href="/3d-tutorial/">← All parts</a><span class="soon-next">Next: Part 2, Geometry, materials and textures (coming soon)</span></nav>
+  <nav class="pager"><a href="/3d-tutorial/">← All parts</a><a href="/3d-tutorial/part-2-geometry-materials-textures/">Part 2: Geometry, Materials and Textures →</a></nav>
 </article>
 </main>
 <footer class="foot"><p>© Mike Smahin · <a href="https://github.com/iodiot/3d-tutorial" target="_blank" rel="noopener">source on GitHub</a></p></footer>
