@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Three.js from Scratch, Part 1: Your First Scene — Mike Smahin</title>
+<meta name="description" content="A friendly first Three.js tutorial: scene, camera, renderer, a lit cube, the animation loop, resizing and OrbitControls, with diagrams, screenshots and a live demo.">
+<link rel="canonical" href="https://iodiot.github.io/3d-tutorial/part-1-first-scene/">
+<meta property="og:title" content="Three.js from Scratch, Part 1: Your First Scene — Mike Smahin">
+<meta property="og:description" content="A friendly first Three.js tutorial: scene, camera, renderer, a lit cube, the animation loop, resizing and OrbitControls, with diagrams, screenshots and a live demo.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d12'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' text-anchor='middle' fill='%237cf5d4'%3E3D%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/3d-tutorial/assets/style.css?v=1">
+</head>
+<body>
+<div class="bg"></div>
+<header class="nav">
+  <a class="brand" href="/">Mike Smahin</a>
+  <nav>
+    <a href="/3d-tutorial/">3D Tutorial</a>
+    <a href="/blog/">Blog</a>
+    <a href="/">Portfolio</a>
+  </nav>
+</header>
+<main>
+<article class="post">
+  <header class="post-head">
+    <p class="eyebrow"><a href="/3d-tutorial/">← Three.js from Scratch · all parts</a></p>
+    <h1>Three.js from Scratch, Part 1: Your First Scene</h1>
+    <p class="meta-line"><time datetime="2026-10-20">Oct 20, 2026</time> · Mike Smahin</p>
+    <ul class="tags"><li class="topic">part 1</li><li>three.js</li><li>webgl</li><li>javascript</li></ul>
+  </header>
+  <div class="prose"><p>This is the first article in a series about 3D on the web: Three.js, WebGL and, later on, WebGPU. I have been building frontend and real-time 3D software for more than 15 years, and most of what I know I learned by breaking small scenes until they made sense. That is the plan here too: small steps, real code, and a screenshot of what you should see after each one.</p>
+<p>The audience is frontend developers. If you have never touched 3D, you will be fine. If you already have a spinning cube somewhere in a side project, I will try to explain <em>why</em> things work, which is what tends to matter once scenes get bigger.</p>
+<p>By the end of this article you will have this, running in your browser. Drag it around:</p>
+<div class="demo">
+  <iframe src="/3d-tutorial/demos/part-1/" title="Live demo: a lit cube with OrbitControls" loading="lazy"></iframe>
+</div>
+<p class="demo-links"><a href="/3d-tutorial/demos/part-1/" target="_blank" rel="noopener">Open the demo full screen ↗</a> · <a href="https://github.com/iodiot/3d-tutorial/tree/main/demos/part-1" target="_blank" rel="noopener">Source on GitHub ↗</a></p>
+<h2>What is coming in this series</h2>
+<p>Roughly, the plan is:</p>
+<ol>
+<li><strong>Your first scene</strong> (this article): scene, camera, renderer, lights, the render loop.</li>
+<li>Geometry, materials and textures: what a mesh is made of and how surfaces react to light.</li>
+<li>Loading real models (glTF), shadows and environment lighting.</li>
+<li>Shaders: writing your own GLSL, and what the GPU is actually doing.</li>
+<li>WebGPU: Three.js's <code>WebGPURenderer</code>, the TSL shading language and compute.</li>
+</ol>
+<p>The order may change as I write, but the direction will not: from &quot;it renders&quot; to &quot;I know why it renders like that&quot;.</p>
+<h2>What Three.js is, and how it relates to WebGL and WebGPU</h2>
+<p>Your browser gives you two low-level ways to talk to the GPU:</p>
+<ul>
+<li><strong>WebGL</strong> (in practice WebGL 2 today) is a JavaScript version of OpenGL ES. It is everywhere, and it is very low level: you upload buffers of numbers, compile shader programs, and issue draw calls. Drawing a single lit cube from scratch takes a surprising amount of code.</li>
+<li><strong>WebGPU</strong> is the newer API, designed around how modern GPUs work (closer to Vulkan, Metal and Direct3D 12). It also adds general-purpose compute shaders.</li>
+</ul>
+<p><strong>Three.js</strong> is a library that sits on top of these. Instead of buffers and draw calls, you work with objects you can reason about: a scene, a camera, meshes, materials, lights. Three.js turns them into GPU commands for you. The project was started by Ricardo Cabello (mrdoob) in 2010 and is still the most widely used 3D library for the web.</p>
+<p>Three.js has two renderers:</p>
+<ul>
+<li><code>WebGLRenderer</code>, the classic one, which we use in this article. Current versions require WebGL 2.</li>
+<li><code>WebGPURenderer</code> (imported from <code>three/webgpu</code>), which uses WebGPU and falls back to WebGL 2 when WebGPU is not available. We will get to it later in the series.</li>
+</ul>
+<p>The good news: scenes, cameras, geometries, lights and most of the API are the same for both. What you learn here carries over.</p>
+<blockquote>
+<p>Everything in this article uses Three.js <strong>r186</strong> (npm version <code>0.186.1</code>), the current release at the time of writing.</p>
+</blockquote>
+<h2>Setup</h2>
+<p>You need a page, a <code>&lt;script type=&quot;module&quot;&gt;</code> and a way to import <code>three</code>. There are two common ways to get it.</p>
+<h3>Option A: no build step, import map + CDN</h3>
+<p>This is the fastest way to start. An <a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Element/script/type/importmap" target="_blank" rel="noopener">import map</a> tells the browser where the bare specifier <code>three</code> lives, so your code can <code>import * as THREE from 'three'</code> exactly like it would in a bundled project. The second entry maps <code>three/addons/</code> to the examples folder, where things like <code>OrbitControls</code> live.</p>
+<pre class="hljs"><code class="language-html"><span class="hljs-meta">&lt;!doctype <span class="hljs-keyword">html</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">html</span> <span class="hljs-attr">lang</span>=<span class="hljs-string">&quot;en&quot;</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">head</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">charset</span>=<span class="hljs-string">&quot;utf-8&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">name</span>=<span class="hljs-string">&quot;viewport&quot;</span> <span class="hljs-attr">content</span>=<span class="hljs-string">&quot;width=device-width, initial-scale=1&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">title</span>&gt;</span>My first Three.js scene<span class="hljs-tag">&lt;/<span class="hljs-name">title</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">style</span>&gt;</span><span class="language-css">
+    <span class="hljs-selector-tag">html</span>, <span class="hljs-selector-tag">body</span> { <span class="hljs-attribute">margin</span>: <span class="hljs-number">0</span>; <span class="hljs-attribute">height</span>: <span class="hljs-number">100%</span>; <span class="hljs-attribute">background</span>: <span class="hljs-number">#000</span>; }
+    <span class="hljs-selector-tag">canvas</span> { <span class="hljs-attribute">display</span>: block; }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">style</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;importmap&quot;</span>&gt;</span><span class="language-javascript">
+    {
+      <span class="hljs-string">&quot;imports&quot;</span>: {
+        <span class="hljs-string">&quot;three&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js&quot;</span>,
+        <span class="hljs-string">&quot;three/addons/&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/&quot;</span>
+      }
+    }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">head</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">body</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;module&quot;</span>&gt;</span><span class="language-javascript">
+    <span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three&#x27;</span>;
+    <span class="hljs-comment">// your code goes here</span>
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">body</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">html</span>&gt;</span>
+</code></pre>
+<p>Pin the version in the URL. Three.js changes between releases, and you do not want your page to change under you.</p>
+<p>One gotcha: ES modules do not load from <code>file://</code>. Serve the folder with any static server, for example <code>npx serve .</code> or <code>python3 -m http.server</code>.</p>
+<p>The <code>canvas { display: block; }</code> rule matters more than it looks. A canvas is an inline element by default, and the few pixels of space under the text baseline will give you scrollbars on a full-screen scene.</p>
+<h3>Option B: npm + Vite</h3>
+<p>For a real project you will want a bundler. Vite is the easiest:</p>
+<pre class="hljs"><code class="language-bash">npm create vite@latest my-scene -- --template vanilla
+<span class="hljs-built_in">cd</span> my-scene
+npm install three
+npm run dev
+</code></pre>
+<p>If you use TypeScript (the <code>vanilla-ts</code> template), also install the types with <code>npm install -D @types/three</code>.</p>
+<p>The imports are the same as in Option A, because the <code>three</code> package exports its addons under <code>three/addons/</code>:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three&#x27;</span>;
+<span class="hljs-keyword">import</span> { <span class="hljs-title class_">OrbitControls</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/controls/OrbitControls.js&#x27;</span>;
+</code></pre>
+<p>This is why I like the import map approach for learning: the code you write is identical, only where <code>three</code> comes from changes.</p>
+<h2>Three things you always need: scene, camera, renderer</h2>
+<p>Every Three.js app has the same three pieces:</p>
+<ul>
+<li>a <strong>Scene</strong>, the container for everything you want to draw;</li>
+<li>a <strong>Camera</strong>, the point of view you draw it from;</li>
+<li>a <strong>Renderer</strong>, which takes the scene and the camera and produces pixels on a <code>&lt;canvas&gt;</code>.</li>
+</ul>
+<figure>
+  <img src="/3d-tutorial/images/part-1/scene-graph.svg" alt="Diagram: a Scene with a Mesh, an AmbientLight and a DirectionalLight as children; the Mesh references a BoxGeometry and a MeshStandardMaterial; renderer.render(scene, camera) produces pixels on a canvas." width="880" height="470" loading="lazy">
+  <figcaption>The scene graph we build in this article. The scene is a tree of objects; the renderer draws it from the camera's point of view.</figcaption>
+</figure>
+<p>The scene is a tree, usually called a <strong>scene graph</strong>. Every object in it (meshes, lights, groups, even cameras) is an <code>Object3D</code> with a position, rotation and scale. When you move a parent, its children move with it. We will lean on that a lot later; for now the tree is flat.</p>
+<p>Here is the minimal version:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three&#x27;</span>;
+
+<span class="hljs-keyword">const</span> scene = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Scene</span>();
+
+<span class="hljs-keyword">const</span> camera = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PerspectiveCamera</span>(<span class="hljs-number">60</span>, innerWidth / innerHeight, <span class="hljs-number">0.1</span>, <span class="hljs-number">100</span>);
+camera.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">1.5</span>, <span class="hljs-number">4</span>);
+camera.<span class="hljs-title function_">lookAt</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>);
+
+<span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGLRenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span> });
+renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+<span class="hljs-variable language_">document</span>.<span class="hljs-property">body</span>.<span class="hljs-title function_">appendChild</span>(renderer.<span class="hljs-property">domElement</span>);
+
+renderer.<span class="hljs-title function_">render</span>(scene, camera);
+</code></pre>
+<p><code>WebGLRenderer</code> creates its own <code>&lt;canvas&gt;</code>, available as <code>renderer.domElement</code>, and we append it to the page. <code>setSize</code> sets both the drawing buffer size and the canvas CSS size. <code>antialias: true</code> smooths the jagged edges of triangles.</p>
+<h3>The camera, and its four numbers</h3>
+<p><code>PerspectiveCamera(fov, aspect, near, far)</code> describes a pyramid with its tip cut off, called the <strong>view frustum</strong>. Only what is inside it gets drawn.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-1/frustum.svg" alt="Diagram of a perspective camera frustum: the vertical field of view angle at the camera, a small near plane, a large far plane, and aspect ratio as width divided by height." width="880" height="420" loading="lazy">
+  <figcaption>The four parameters of a PerspectiveCamera.</figcaption>
+</figure>
+<ul>
+<li><strong>fov</strong> is the <em>vertical</em> field of view in degrees. 45 to 75 looks natural; bigger values give a wide-angle, fish-eye look.</li>
+<li><strong>aspect</strong> is width divided by height. If it does not match the canvas, everything looks stretched. We will keep it in sync on resize.</li>
+<li><strong>near</strong> and <strong>far</strong> are the distances to the closest and farthest planes that get drawn. Anything closer than <code>near</code> or farther than <code>far</code> is clipped. Do not set <code>near</code> to something tiny like <code>0.00001</code> &quot;just in case&quot;: the depth buffer has limited precision, and a huge far/near ratio causes surfaces to flicker through each other (z-fighting).</li>
+</ul>
+<p>Three.js uses a right-handed coordinate system with <strong>Y up</strong>. The camera looks down its negative Z axis. By putting it at <code>(0, 1.5, 4)</code> and calling <code>lookAt(0, 0, 0)</code>, we move it back and slightly up, looking at the origin.</p>
+<p>Run this and you get... a black page.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-1/step-1-empty.webp" alt="Screenshot: an empty black canvas." width="960" height="600" loading="lazy">
+  <figcaption>Step 1: an empty scene. Black is the renderer's default clear colour. (<a href="/3d-tutorial/demos/part-1/step-1.html" target="_blank" rel="noopener">step-1.html</a>)</figcaption>
+</figure>
+<p>That is correct. The scene is empty, so the renderer just clears the canvas to its default colour, which is black. Not exciting, but everything is wired up.</p>
+<h2>The first mesh: geometry + material</h2>
+<p>A visible object in Three.js is usually a <strong>Mesh</strong>, and a mesh is two things:</p>
+<ul>
+<li>a <strong>geometry</strong>: the shape, stored as vertices and triangles. <code>BoxGeometry</code>, <code>SphereGeometry</code>, <code>PlaneGeometry</code> and friends generate common shapes for you.</li>
+<li>a <strong>material</strong>: how the surface looks, its colour, how shiny or rough it is, and how it reacts to light.</li>
+</ul>
+<pre class="hljs"><code class="language-js">scene.<span class="hljs-property">background</span> = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-number">0x1b1f2a</span>);
+
+<span class="hljs-keyword">const</span> geometry = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BoxGeometry</span>(<span class="hljs-number">1.4</span>, <span class="hljs-number">1.4</span>, <span class="hljs-number">1.4</span>);
+<span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0x3fc8a8</span> });
+<span class="hljs-keyword">const</span> cube = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(geometry, material);
+cube.<span class="hljs-property">rotation</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0.4</span>, <span class="hljs-number">0.7</span>, <span class="hljs-number">0</span>);
+scene.<span class="hljs-title function_">add</span>(cube);
+</code></pre>
+<p>I also set <code>scene.background</code> to a dark blue-grey. You will see why in a second.</p>
+<p>Notice that rotations are in <strong>radians</strong>, not degrees. <code>0.7</code> radians is about 40 degrees. <code>THREE.MathUtils.degToRad()</code> converts if you prefer to think in degrees.</p>
+<p>We asked for a nice teal cube. Here is what we get:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-1/step-2-black-cube.webp" alt="Screenshot: a pure black cube silhouette on a dark blue-grey background." width="960" height="600" loading="lazy">
+  <figcaption>Step 2: the cube is there, but it is completely black. (<a href="/3d-tutorial/demos/part-1/step-2.html" target="_blank" rel="noopener">step-2.html</a>)</figcaption>
+</figure>
+<p>A black silhouette. Without the background colour, it would have been black on black and you would have thought nothing rendered at all. This is probably the most common &quot;my scene is broken&quot; moment in Three.js.</p>
+<h3>Why MeshStandardMaterial is black without light</h3>
+<p><code>MeshStandardMaterial</code> is a <strong>physically based</strong> material (PBR). It does not &quot;have&quot; a colour the way a CSS box does. Its <code>color</code> describes how much of the incoming light the surface reflects, per channel. The shader computes, for every pixel: how much light arrives here, from which directions, and how much of it bounces towards the camera.</p>
+<p>With no lights in the scene (and no environment map), the amount of incoming light is zero. Zero times any colour is zero. So: black.</p>
+<p>If you just want to check that your geometry is there, use <code>MeshBasicMaterial</code>, which ignores lighting and always draws its flat colour. But flat colour also means no shading, so a cube looks like a flat hexagon. For anything that should look 3D, add light.</p>
+<h2>Let there be light: AmbientLight + DirectionalLight</h2>
+<p>Three.js has several light types. These are the common ones:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-1/light-types.svg" alt="Diagram comparing light types: AmbientLight lights everything equally; HemisphereLight uses a sky and a ground colour; DirectionalLight has parallel rays like the sun; PointLight shines in all directions from a point; SpotLight shines in a cone." width="1000" height="330" loading="lazy">
+  <figcaption>The common light types. In this article we use the first and the third.</figcaption>
+</figure>
+<p>A classic beginner setup uses two:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> ambient = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">AmbientLight</span>(<span class="hljs-number">0xffffff</span>, <span class="hljs-number">0.4</span>);
+scene.<span class="hljs-title function_">add</span>(ambient);
+
+<span class="hljs-keyword">const</span> sun = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">DirectionalLight</span>(<span class="hljs-number">0xffffff</span>, <span class="hljs-number">2.5</span>);
+sun.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">3</span>, <span class="hljs-number">4</span>, <span class="hljs-number">2</span>);
+scene.<span class="hljs-title function_">add</span>(sun);
+</code></pre>
+<ul>
+<li><strong>DirectionalLight</strong> behaves like the sun: all rays are parallel and come from one direction, from the light's <code>position</code> towards its <code>target</code> (the origin by default). Faces turned towards it are bright, faces turned away are dark. This is what gives the cube its shape.</li>
+<li><strong>AmbientLight</strong> adds the same amount of light to every surface, from no direction at all. On its own it looks flat, exactly like <code>MeshBasicMaterial</code>. Its job is to lift the shadowed side so it is not pure black.</li>
+</ul>
+<p>About the numbers: since r155, Three.js uses physically based light units by default, so intensities like <code>2.5</code> for a directional light are normal. If you copy code from an old tutorial and everything looks too dark or too bright, this is often why.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-1/step-3-lit-cube.webp" alt="Screenshot: a teal cube lit from the upper right, with two bright faces and one darker face." width="960" height="600" loading="lazy">
+  <figcaption>Step 3: with a directional light and a little ambient light, the cube finally looks like a cube. (<a href="/3d-tutorial/demos/part-1/step-3.html" target="_blank" rel="noopener">step-3.html</a>)</figcaption>
+</figure>
+<p>Try setting the ambient intensity to <code>0</code> and to <code>2</code>. With <code>0</code>, the side away from the sun goes pitch black. With <code>2</code>, the cube starts to look flat again. Lighting is a balance between the two.</p>
+<h2>The animation loop: renderer.setAnimationLoop</h2>
+<p>So far we called <code>renderer.render()</code> once. To animate, we need to render every frame. You may have seen this pattern with <code>requestAnimationFrame</code>:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">function</span> <span class="hljs-title function_">tick</span>(<span class="hljs-params"></span>) {
+  <span class="hljs-title function_">requestAnimationFrame</span>(tick);
+  renderer.<span class="hljs-title function_">render</span>(scene, camera);
+}
+<span class="hljs-title function_">tick</span>();
+</code></pre>
+<p>Three.js has a built-in version, and I recommend it:</p>
+<pre class="hljs"><code class="language-js">renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">time</span>) =&gt;</span> {
+  cube.<span class="hljs-property">rotation</span>.<span class="hljs-property">x</span> = <span class="hljs-number">0.4</span> + time * <span class="hljs-number">0.0004</span>;
+  cube.<span class="hljs-property">rotation</span>.<span class="hljs-property">y</span> = <span class="hljs-number">0.7</span> + time * <span class="hljs-number">0.0007</span>;
+  renderer.<span class="hljs-title function_">render</span>(scene, camera);
+});
+</code></pre>
+<p>Why <code>setAnimationLoop</code> instead of your own <code>requestAnimationFrame</code>?</p>
+<ul>
+<li>It is required for WebXR. In VR, frames must be driven by the headset, not by the page, and <code>setAnimationLoop</code> handles that switch for you.</li>
+<li>It is the standard way to drive <code>WebGPURenderer</code> too, so the same loop works when we switch renderers later.</li>
+<li>You can stop it with <code>renderer.setAnimationLoop(null)</code>.</li>
+</ul>
+<p>The callback receives a timestamp in milliseconds. I use it to compute the rotation directly from time, instead of adding a fixed amount per frame. That keeps the speed the same on a 60 Hz laptop and a 120 Hz phone. If you increment by a constant every frame, the cube spins twice as fast on the 120 Hz screen.</p>
+<h2>Resizing and devicePixelRatio</h2>
+<p>Two things go wrong as soon as someone resizes the window or opens your page on a phone.</p>
+<p><strong>The window size changes.</strong> The canvas keeps its old size and the camera keeps its old aspect ratio, so the picture gets stretched or cut off. The fix is to update both:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">function</span> <span class="hljs-title function_">onResize</span>(<span class="hljs-params"></span>) {
+  camera.<span class="hljs-property">aspect</span> = innerWidth / innerHeight;
+  camera.<span class="hljs-title function_">updateProjectionMatrix</span>();
+  renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+  renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+}
+<span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;resize&#x27;</span>, onResize);
+</code></pre>
+<p><code>updateProjectionMatrix()</code> is the important line. The camera caches its projection matrix, and changing <code>aspect</code> (or <code>fov</code>, <code>near</code>, <code>far</code>) does nothing until you call it.</p>
+<p><strong>Screens have more pixels than CSS says.</strong> On a &quot;retina&quot; display, one CSS pixel is 2 or 3 physical pixels, and <code>window.devicePixelRatio</code> tells you the ratio. If you ignore it, the canvas is rendered at CSS resolution and stretched, which looks blurry. <code>renderer.setPixelRatio()</code> fixes that.</p>
+<p>Why <code>Math.min(devicePixelRatio, 2)</code>? Because the cost grows with the <em>square</em> of the ratio. At 3x you render 9 times as many pixels as at 1x; at 2x, 4 times as many. On a phone, going from 2x to 3x costs more than twice the GPU work for a difference that is hard to see. Capping at 2 is a common, sensible default.</p>
+<p>Here I resize to the window because the canvas is full screen. If your canvas lives inside a layout, size it to its container instead (for example with a <code>ResizeObserver</code> and <code>canvas.clientWidth / clientHeight</code>). The idea is the same.</p>
+<h2>Bonus: OrbitControls</h2>
+<p>A static camera is fine, but being able to drag the scene around makes it much easier to understand what you are looking at. <code>OrbitControls</code> is an addon that does exactly that:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">OrbitControls</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/controls/OrbitControls.js&#x27;</span>;
+
+<span class="hljs-keyword">const</span> controls = <span class="hljs-keyword">new</span> <span class="hljs-title class_">OrbitControls</span>(camera, renderer.<span class="hljs-property">domElement</span>);
+controls.<span class="hljs-property">enableDamping</span> = <span class="hljs-literal">true</span>;
+</code></pre>
+<p>Drag to rotate around the target, scroll to zoom, right-drag (or two-finger drag) to pan. With <code>enableDamping</code>, the motion eases out smoothly instead of stopping dead. Damping has one requirement: call <code>controls.update()</code> every frame, inside the animation loop.</p>
+<p>The controls point the camera at <code>controls.target</code> (the origin by default), so we no longer need <code>camera.lookAt()</code>. I also added a <code>GridHelper</code> as a floor. Without some reference in the scene, it is hard to tell whether the camera moves or the cube does.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-1/step-4-orbit-controls.webp" alt="Screenshot: the teal cube above a grid floor, seen from a different angle after dragging with OrbitControls." width="960" height="600" loading="lazy">
+  <figcaption>Step 4: the final scene after a short drag with OrbitControls. The grid shows that the camera has moved.</figcaption>
+</figure>
+<h2>The full code</h2>
+<p>Here is everything in one file. Save it as <code>index.html</code>, serve the folder, and open it. It is the same code as the <a href="/3d-tutorial/demos/part-1/">live demo</a>.</p>
+<pre class="hljs"><code class="language-html"><span class="hljs-meta">&lt;!doctype <span class="hljs-keyword">html</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">html</span> <span class="hljs-attr">lang</span>=<span class="hljs-string">&quot;en&quot;</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">head</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">charset</span>=<span class="hljs-string">&quot;utf-8&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">name</span>=<span class="hljs-string">&quot;viewport&quot;</span> <span class="hljs-attr">content</span>=<span class="hljs-string">&quot;width=device-width, initial-scale=1&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">title</span>&gt;</span>Your first Three.js scene<span class="hljs-tag">&lt;/<span class="hljs-name">title</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">style</span>&gt;</span><span class="language-css">
+    <span class="hljs-selector-tag">html</span>, <span class="hljs-selector-tag">body</span> { <span class="hljs-attribute">margin</span>: <span class="hljs-number">0</span>; <span class="hljs-attribute">height</span>: <span class="hljs-number">100%</span>; <span class="hljs-attribute">background</span>: <span class="hljs-number">#000</span>; }
+    <span class="hljs-selector-tag">canvas</span> { <span class="hljs-attribute">display</span>: block; }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">style</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;importmap&quot;</span>&gt;</span><span class="language-javascript">
+    {
+      <span class="hljs-string">&quot;imports&quot;</span>: {
+        <span class="hljs-string">&quot;three&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js&quot;</span>,
+        <span class="hljs-string">&quot;three/addons/&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/&quot;</span>
+      }
+    }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">head</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">body</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;module&quot;</span>&gt;</span><span class="language-javascript">
+    <span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">OrbitControls</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/controls/OrbitControls.js&#x27;</span>;
+
+    <span class="hljs-comment">// Scene and camera</span>
+    <span class="hljs-keyword">const</span> scene = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Scene</span>();
+    scene.<span class="hljs-property">background</span> = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-number">0x1b1f2a</span>);
+
+    <span class="hljs-keyword">const</span> camera = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PerspectiveCamera</span>(<span class="hljs-number">60</span>, innerWidth / innerHeight, <span class="hljs-number">0.1</span>, <span class="hljs-number">100</span>);
+    camera.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">1.5</span>, <span class="hljs-number">4</span>);
+
+    <span class="hljs-comment">// Renderer</span>
+    <span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGLRenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span> });
+    renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+    renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    <span class="hljs-variable language_">document</span>.<span class="hljs-property">body</span>.<span class="hljs-title function_">appendChild</span>(renderer.<span class="hljs-property">domElement</span>);
+
+    <span class="hljs-comment">// A mesh = geometry + material</span>
+    <span class="hljs-keyword">const</span> geometry = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BoxGeometry</span>(<span class="hljs-number">1.4</span>, <span class="hljs-number">1.4</span>, <span class="hljs-number">1.4</span>);
+    <span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0x3fc8a8</span>, <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.45</span> });
+    <span class="hljs-keyword">const</span> cube = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(geometry, material);
+    scene.<span class="hljs-title function_">add</span>(cube);
+
+    <span class="hljs-comment">// A floor grid, so you can see the camera move</span>
+    <span class="hljs-keyword">const</span> grid = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">GridHelper</span>(<span class="hljs-number">10</span>, <span class="hljs-number">20</span>, <span class="hljs-number">0x3a4258</span>, <span class="hljs-number">0x262c3b</span>);
+    grid.<span class="hljs-property">position</span>.<span class="hljs-property">y</span> = -<span class="hljs-number">1.2</span>;
+    scene.<span class="hljs-title function_">add</span>(grid);
+
+    <span class="hljs-comment">// Lights</span>
+    scene.<span class="hljs-title function_">add</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">AmbientLight</span>(<span class="hljs-number">0xffffff</span>, <span class="hljs-number">0.4</span>));
+    <span class="hljs-keyword">const</span> sun = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">DirectionalLight</span>(<span class="hljs-number">0xffffff</span>, <span class="hljs-number">2.5</span>);
+    sun.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">3</span>, <span class="hljs-number">4</span>, <span class="hljs-number">2</span>);
+    scene.<span class="hljs-title function_">add</span>(sun);
+
+    <span class="hljs-comment">// Orbit controls: drag to rotate, scroll to zoom, right-drag to pan</span>
+    <span class="hljs-keyword">const</span> controls = <span class="hljs-keyword">new</span> <span class="hljs-title class_">OrbitControls</span>(camera, renderer.<span class="hljs-property">domElement</span>);
+    controls.<span class="hljs-property">enableDamping</span> = <span class="hljs-literal">true</span>;
+    controls.<span class="hljs-property">target</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>);
+
+    <span class="hljs-comment">// Keep the canvas sharp and undistorted when the window changes size</span>
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">onResize</span>(<span class="hljs-params"></span>) {
+      camera.<span class="hljs-property">aspect</span> = innerWidth / innerHeight;
+      camera.<span class="hljs-title function_">updateProjectionMatrix</span>();
+      renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+      renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    }
+    <span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;resize&#x27;</span>, onResize);
+
+    <span class="hljs-comment">// Animation loop</span>
+    renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">time</span>) =&gt;</span> {
+      cube.<span class="hljs-property">rotation</span>.<span class="hljs-property">x</span> = <span class="hljs-number">0.4</span> + time * <span class="hljs-number">0.0004</span>;
+      cube.<span class="hljs-property">rotation</span>.<span class="hljs-property">y</span> = <span class="hljs-number">0.7</span> + time * <span class="hljs-number">0.0007</span>;
+      controls.<span class="hljs-title function_">update</span>();
+      renderer.<span class="hljs-title function_">render</span>(scene, camera);
+    });
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">body</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">html</span>&gt;</span>
+</code></pre>
+<p>The step-by-step versions are in the repo too: <a href="/3d-tutorial/demos/part-1/step-1.html">step-1.html</a>, <a href="/3d-tutorial/demos/part-1/step-2.html">step-2.html</a>, <a href="/3d-tutorial/demos/part-1/step-3.html">step-3.html</a>.</p>
+<h2>A few things to try</h2>
+<ul>
+<li>Swap <code>BoxGeometry</code> for <code>TorusKnotGeometry(0.8, 0.28, 160, 24)</code> and watch how the light wraps around curves.</li>
+<li>Change <code>roughness</code> between <code>0</code> and <code>1</code>, and set <code>metalness: 1</code>. (A fully metallic surface with no environment map looks very dark. That is a hint about the next article.)</li>
+<li>Move <code>sun.position</code> in the animation loop and watch the shading follow it.</li>
+<li>Set <code>fov</code> to <code>20</code>, then to <code>110</code>, and move the camera to compensate.</li>
+</ul>
+<h2>Next time</h2>
+<p>Our cube is lit, but its surface is a single flat colour. In the next article we look at what a mesh is really made of: the vertices, normals and UVs inside a geometry, how the different materials react to light, and how to put a texture on a surface without it looking washed out (there is a colour space story here). See you there.</p>
+</div>
+  <nav class="pager"><a href="/3d-tutorial/">← All parts</a><span class="soon-next">Next: Part 2, Geometry, materials and textures (coming soon)</span></nav>
+</article>
+</main>
+<footer class="foot"><p>© Mike Smahin · <a href="https://github.com/iodiot/3d-tutorial" target="_blank" rel="noopener">source on GitHub</a></p></footer>
+</body>
+</html>
