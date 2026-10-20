@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 420" width="880" height="420" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <rect width="880" height="420" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">PERSPECTIVECAMERA(FOV, ASPECT, NEAR, FAR)</text>
+  <!-- frustum: apex at (90,230) -->
+    <path d="M90 230L700 78L820 128L820 372L700 342Z" fill="#7aa7ff" fill-opacity=".06"/>
+  <g stroke="#7aa7ff" stroke-width="1.5" fill="none">
+    <path d="M90 230L700 78M90 230L700 342M90 230L820 128M90 230L820 372" stroke-opacity=".55"/>
+  </g>
+  <!-- near plane -->
+  <path d="M220 198L268 206L268 262L220 254Z" fill="#7cf5d4" fill-opacity=".25" stroke="#7cf5d4" stroke-width="2"/>
+  <!-- far plane -->
+  <path d="M700 78L820 128L820 372L700 342Z" fill="#7aa7ff" fill-opacity=".14" stroke="#7aa7ff" stroke-width="2"/>
+  <!-- cube inside -->
+  <g transform="translate(470 210)">
+    <path d="M-28 -18L6 -30L32 -14L-2 -2Z" fill="#46c9a8"/>
+    <path d="M-28 -18L-2 -2L-2 34L-28 18Z" fill="#14503f"/>
+    <path d="M-2 -2L32 -14L32 22L-2 34Z" fill="#2c9a7f"/>
+  </g>
+  <!-- camera -->
+  <g transform="translate(58 214)">
+    <rect x="0" y="0" width="34" height="32" rx="5" fill="#c79bff"/>
+    <circle cx="17" cy="16" r="8" fill="#12151d"/><circle cx="17" cy="16" r="4" fill="#c79bff"/>
+  </g>
+  <text x="74" y="270" fill="#c79bff" font-size="13" text-anchor="middle">camera</text>
+  <!-- fov arc -->
+  <path d="M150 215A62 62 0 0 1 150 245" stroke="#f2cc60" stroke-width="2" fill="none"/>
+  <text x="162" y="160" fill="#f2cc60" font-size="14" font-weight="600">fov</text>
+  <text x="162" y="177" fill="#9aa3b5" font-size="12">vertical angle, degrees</text>
+  <path d="M168 182L154 214" stroke="#f2cc60" stroke-width="1" stroke-dasharray="3 3"/>
+  <!-- near / far labels -->
+  <text x="244" y="306" fill="#7cf5d4" font-size="14" font-weight="600" text-anchor="middle">near</text>
+  <text x="244" y="323" fill="#9aa3b5" font-size="12" text-anchor="middle">e.g. 0.1</text>
+  <text x="760" y="400" fill="#7aa7ff" font-size="14" font-weight="600" text-anchor="middle">far  <tspan fill="#9aa3b5" font-size="12" font-weight="400">e.g. 100</tspan></text>
+  <!-- aspect -->
+  <text x="610" y="62" fill="#e7eaf0" font-size="14" font-weight="600">aspect = width / height</text>
+  <path d="M836 128V372" stroke="#e7eaf0" stroke-width="1" stroke-opacity=".5"/>
+  <text x="852" y="254" fill="#9aa3b5" font-size="12" text-anchor="middle" transform="rotate(90 852 254)">height</text>
+  <text x="430" y="120" fill="#9aa3b5" font-size="12">only what is inside this pyramid gets drawn</text>
+</svg>

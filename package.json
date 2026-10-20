@@ -1,0 +1,10 @@
+{
+  "name": "3d-tutorial",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node build.mjs" },
+  "dependencies": {
+    "highlight.js": "^11.10.0",
+    "markdown-it": "^14.1.0"
+  }
+}
