@@ -7,8 +7,8 @@ A step-by-step tutorial series on 3D for the web with Three.js, WebGL and WebGPU
 | Part | Article | Demo |
 |---|---|---|
 | 1 | [Your First Scene](https://iodiot.github.io/3d-tutorial/part-1-first-scene/): scene, camera, renderer, lights, animation loop, resizing, OrbitControls | [live](https://iodiot.github.io/3d-tutorial/demos/part-1/) · [code](demos/part-1/) |
-| 2 | Geometry, materials and textures | coming next |
-| 3 | Real models, shadows and environment light | planned |
+| 2 | [Geometry, Materials and Textures](https://iodiot.github.io/3d-tutorial/part-2-geometry-materials-textures/): BufferGeometry, normals, the built-in materials, roughness and metalness, UVs, colour spaces, wrapping, normal and roughness maps | [live](https://iodiot.github.io/3d-tutorial/demos/part-2/) · [code](demos/part-2/) |
+| 3 | Real models, shadows and environment light | coming next |
 | 4 | Shaders | planned |
 | 5 | WebGPU | planned |
 

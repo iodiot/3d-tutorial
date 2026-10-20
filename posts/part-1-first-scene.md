@@ -25,7 +25,7 @@ By the end of this article you will have this, running in your browser. Drag it 
 Roughly, the plan is:
 
 1. **Your first scene** (this article): scene, camera, renderer, lights, the render loop.
-2. Geometry, materials and textures: what a mesh is made of and how surfaces react to light.
+2. [Geometry, materials and textures](/3d-tutorial/part-2-geometry-materials-textures/): what a mesh is made of and how surfaces react to light.
 3. Loading real models (glTF), shadows and environment lighting.
 4. Shaders: writing your own GLSL, and what the GPU is actually doing.
 5. WebGPU: Three.js's `WebGPURenderer`, the TSL shading language and compute.
@@ -56,7 +56,7 @@ You need a page, a `<script type="module">` and a way to import `three`. There a
 
 ### Option A: no build step, import map + CDN
 
-This is the fastest way to start. An [import map](https://developer.mozilla.org/en-US/docs/Web/HTML/Element/script/type/importmap) tells the browser where the bare specifier `three` lives, so your code can `import * as THREE from 'three'` exactly like it would in a bundled project. The second entry maps `three/addons/` to the examples folder, where things like `OrbitControls` live.
+This is the fastest way to start. An [import map](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/script/type/importmap) tells the browser where the bare specifier `three` lives, so your code can `import * as THREE from 'three'` exactly like it would in a bundled project. The second entry maps `three/addons/` to the examples folder, where things like `OrbitControls` live.
 
 ```html
 <!doctype html>
@@ -238,7 +238,7 @@ scene.add(sun);
 About the numbers: since r155, Three.js uses physically based light units by default, so intensities like `2.5` for a directional light are normal. If you copy code from an old tutorial and everything looks too dark or too bright, this is often why.
 
 <figure>
-  <img src="/3d-tutorial/images/part-1/step-3-lit-cube.webp" alt="Screenshot: a teal cube lit from the upper right, with two bright faces and one darker face." width="960" height="600" loading="lazy">
+  <img src="/3d-tutorial/images/part-1/step-3-lit-cube.webp" alt="Screenshot: a teal cube lit from the upper right. The faces turned towards the light are bright teal; the side turned away is dark teal, not black." width="960" height="600" loading="lazy">
   <figcaption>Step 3: with a directional light and a little ambient light, the cube finally looks like a cube. (<a href="/3d-tutorial/demos/part-1/step-3.html" target="_blank" rel="noopener">step-3.html</a>)</figcaption>
 </figure>
 
@@ -272,7 +272,7 @@ Why `setAnimationLoop` instead of your own `requestAnimationFrame`?
 - It is the standard way to drive `WebGPURenderer` too, so the same loop works when we switch renderers later.
 - You can stop it with `renderer.setAnimationLoop(null)`.
 
-The callback receives a timestamp in milliseconds. I use it to compute the rotation directly from time, instead of adding a fixed amount per frame. That keeps the speed the same on a 60 Hz laptop and a 120 Hz phone. If you increment by a constant every frame, the cube spins twice as fast on the 120 Hz screen.
+If you opened [step-3.html](/3d-tutorial/demos/part-1/step-3.html) and wondered why the cube was already turning: this is the loop it uses. The callback receives a timestamp in milliseconds. I use it to compute the rotation directly from time, instead of adding a fixed amount per frame. That keeps the speed the same on a 60 Hz laptop and a 120 Hz phone. If you increment by a constant every frame, the cube spins twice as fast on the 120 Hz screen.
 
 ## Resizing and devicePixelRatio
 
@@ -315,7 +315,7 @@ The controls point the camera at `controls.target` (the origin by default), so w
 
 <figure>
   <img src="/3d-tutorial/images/part-1/step-4-orbit-controls.webp" alt="Screenshot: the teal cube above a grid floor, seen from a different angle after dragging with OrbitControls." width="960" height="600" loading="lazy">
-  <figcaption>Step 4: the final scene after a short drag with OrbitControls. The grid shows that the camera has moved.</figcaption>
+  <figcaption>Step 4: the final scene after a short drag with OrbitControls. The grid shows that the camera has moved. (<a href="/3d-tutorial/demos/part-1/" target="_blank" rel="noopener">the final demo</a>)</figcaption>
 </figure>
 
 ## The full code
@@ -414,4 +414,4 @@ The step-by-step versions are in the repo too: [step-1.html](/3d-tutorial/demos/
 
 ## Next time
 
-Our cube is lit, but its surface is a single flat colour. In the next article we look at what a mesh is really made of: the vertices, normals and UVs inside a geometry, how the different materials react to light, and how to put a texture on a surface without it looking washed out (there is a colour space story here). See you there.
+Our cube is lit, but its surface is a single flat colour. In [the next article](/3d-tutorial/part-2-geometry-materials-textures/) we look at what a mesh is really made of: the vertices, normals and UVs inside a geometry, how the different materials react to light, and how to put a texture on a surface without it looking washed out (there is a colour space story here). See you there.

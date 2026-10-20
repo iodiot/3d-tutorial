@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 400" width="880" height="400" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs>
+    <marker id="n" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f2cc60"/></marker>
+  </defs>
+  <rect width="880" height="400" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">NORMALS: FLAT VS SMOOTH</text>
+  <!-- flat: polyline arc made of 4 segments -->
+  <text x="60" y="88" fill="#e7eaf0" font-size="16" font-weight="600">Flat</text>
+  <text x="60" y="108" fill="#9aa3b5" font-size="12">one normal per face, vertices are not shared</text>
+  <path d="M60 300L120 210L210 168L300 210L360 300" fill="none" stroke="#3fc8a8" stroke-width="4" stroke-linejoin="round"/>
+  <g stroke="#f2cc60" stroke-width="2" marker-end="url(#n)">
+    <path d="M70 289L45 272"/><path d="M110 225L85 208"/>
+    <path d="M135 201L122 174"/><path d="M195 175L182 148"/>
+    <path d="M225 175L238 148"/><path d="M285 201L298 174"/>
+    <path d="M310 225L335 208"/><path d="M350 289L375 272"/>
+  </g>
+  <g fill="#e7eaf0"><circle cx="120" cy="210" r="4"/><circle cx="210" cy="168" r="4"/><circle cx="300" cy="210" r="4"/></g>
+  <text x="60" y="340" fill="#9aa3b5" font-size="12">Light changes in a jump at every edge:</text>
+  <text x="60" y="357" fill="#9aa3b5" font-size="12">you see the facets.</text>
+  <!-- smooth -->
+  <text x="480" y="88" fill="#e7eaf0" font-size="16" font-weight="600">Smooth</text>
+  <text x="480" y="108" fill="#9aa3b5" font-size="12">shared vertices, normals averaged from the faces around</text>
+  <path d="M480 300L540 210L630 168L720 210L780 300" fill="none" stroke="#3fc8a8" stroke-width="4" stroke-linejoin="round"/>
+  <g stroke="#f2cc60" stroke-width="2" marker-end="url(#n)">
+    <path d="M540 210L503 183"/><path d="M630 168L630 126"/><path d="M720 210L757 183"/>
+    <path d="M480 300L446 286"/><path d="M780 300L814 286"/>
+  </g>
+  <g fill="#e7eaf0"><circle cx="540" cy="210" r="4"/><circle cx="630" cy="168" r="4"/><circle cx="720" cy="210" r="4"/></g>
+  <text x="480" y="340" fill="#9aa3b5" font-size="12">The shader interpolates normals across each triangle,</text>
+  <text x="480" y="357" fill="#9aa3b5" font-size="12">so the same few triangles look round.</text>
+  <path d="M440 76V360" stroke="#262c3b" stroke-width="1.5"/>
+</svg>

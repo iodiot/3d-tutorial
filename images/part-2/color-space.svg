@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 380" width="1000" height="380" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7386"/></marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff7a85"/></marker>
+  </defs>
+  <rect width="1000" height="380" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">COLOUR SPACES: WHERE THE CONVERSIONS HAPPEN</text>
+  <!-- correct row -->
+  <text x="32" y="84" fill="#7cf5d4" font-size="14" font-weight="600">Correct</text>
+  <g>
+    <rect x="32" y="100" width="170" height="64" rx="12" fill="#171b25" stroke="#c79bff" stroke-width="2"/>
+    <text x="117" y="127" fill="#e7eaf0" font-size="15" font-weight="600" text-anchor="middle">tiles-color.jpg</text>
+    <text x="117" y="147" fill="#9aa3b5" font-size="12" text-anchor="middle">stored as sRGB</text>
+    <path d="M202 132H262" stroke="#6b7386" stroke-width="1.5" marker-end="url(#a)"/>
+    <rect x="266" y="100" width="190" height="64" rx="12" fill="#0f2a24" stroke="#7cf5d4" stroke-width="2"/>
+    <text x="361" y="124" fill="#7cf5d4" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle">colorSpace =</text>
+    <text x="361" y="142" fill="#7cf5d4" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle">SRGBColorSpace</text>
+    <text x="361" y="158" fill="#9aa3b5" font-size="11" text-anchor="middle">decode to linear</text>
+    <path d="M456 132H516" stroke="#6b7386" stroke-width="1.5" marker-end="url(#a)"/>
+    <rect x="520" y="100" width="190" height="64" rx="12" fill="#171b25" stroke="#f2cc60" stroke-width="2"/>
+    <text x="615" y="127" fill="#e7eaf0" font-size="15" font-weight="600" text-anchor="middle">lighting maths</text>
+    <text x="615" y="147" fill="#9aa3b5" font-size="12" text-anchor="middle">in linear values</text>
+    <path d="M710 132H770" stroke="#6b7386" stroke-width="1.5" marker-end="url(#a)"/>
+    <rect x="774" y="100" width="194" height="64" rx="12" fill="#0f2a24" stroke="#7cf5d4" stroke-width="2"/>
+    <text x="871" y="124" fill="#7cf5d4" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle">outputColorSpace</text>
+    <text x="871" y="142" fill="#7cf5d4" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle">(sRGB by default)</text>
+    <text x="871" y="158" fill="#9aa3b5" font-size="11" text-anchor="middle">encode for the screen</text>
+  </g>
+  <!-- wrong row -->
+  <text x="32" y="222" fill="#ff7a85" font-size="14" font-weight="600">Colour space not set</text>
+  <g>
+    <rect x="32" y="238" width="170" height="64" rx="12" fill="#171b25" stroke="#c79bff" stroke-width="2"/>
+    <text x="117" y="265" fill="#e7eaf0" font-size="15" font-weight="600" text-anchor="middle">tiles-color.jpg</text>
+    <text x="117" y="285" fill="#9aa3b5" font-size="12" text-anchor="middle">stored as sRGB</text>
+    <path d="M202 270H262" stroke="#ff7a85" stroke-width="1.5" marker-end="url(#r)"/>
+    <rect x="266" y="238" width="190" height="64" rx="12" fill="#12151d" stroke="#ff7a85" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="361" y="265" fill="#ff7a85" font-size="13" font-weight="600" text-anchor="middle">no decode</text>
+    <text x="361" y="285" fill="#9aa3b5" font-size="11" text-anchor="middle">sRGB numbers used as linear</text>
+    <path d="M456 270H516" stroke="#6b7386" stroke-width="1.5" marker-end="url(#a)"/>
+    <rect x="520" y="238" width="190" height="64" rx="12" fill="#171b25" stroke="#f2cc60" stroke-width="2"/>
+    <text x="615" y="265" fill="#e7eaf0" font-size="15" font-weight="600" text-anchor="middle">lighting maths</text>
+    <text x="615" y="285" fill="#9aa3b5" font-size="12" text-anchor="middle">on values that are too high</text>
+    <path d="M710 270H770" stroke="#6b7386" stroke-width="1.5" marker-end="url(#a)"/>
+    <rect x="774" y="238" width="194" height="64" rx="12" fill="#171b25" stroke="#3a4258" stroke-width="2"/>
+    <text x="871" y="262" fill="#e7eaf0" font-size="14" font-weight="600" text-anchor="middle">encoded again</text>
+    <text x="871" y="282" fill="#9aa3b5" font-size="12" text-anchor="middle">result: pale, washed out</text>
+  </g>
+  <text x="32" y="344" fill="#6b7386" font-size="12">Only colour textures (map, emissiveMap) are sRGB. Data textures (normalMap, roughnessMap, metalnessMap, aoMap) stay linear: leave them alone.</text>
+</svg>

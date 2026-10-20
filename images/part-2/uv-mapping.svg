@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 420" width="880" height="420" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7386"/></marker>
+    <marker id="u" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f2cc60"/></marker>
+    <marker id="v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#c79bff"/></marker>
+    <pattern id="chk" width="50" height="50" patternUnits="userSpaceOnUse" x="70" y="110">
+      <rect width="50" height="50" fill="#2c9a7f"/><rect width="25" height="25" fill="#46c9a8"/><rect x="25" y="25" width="25" height="25" fill="#46c9a8"/>
+    </pattern>
+  </defs>
+  <rect width="880" height="420" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">UV COORDINATES: WHERE THE TEXTURE GOES</text>
+  <!-- texture square 70..270, 110..310 -->
+  <text x="70" y="78" fill="#e7eaf0" font-size="15" font-weight="600">the texture, in UV space</text>
+  <rect x="70" y="110" width="200" height="200" fill="url(#chk)" stroke="#e7eaf0" stroke-width="1.5"/>
+  <text x="170" y="218" fill="#12151d" font-size="64" font-weight="800" text-anchor="middle">F</text>
+  <path d="M70 330H290" stroke="#f2cc60" stroke-width="2" marker-end="url(#u)"/><text x="296" y="335" fill="#f2cc60" font-size="14" font-weight="700">u</text>
+  <path d="M50 310V112" stroke="#c79bff" stroke-width="2" marker-end="url(#v)"/><text x="45" y="104" fill="#c79bff" font-size="14" font-weight="700">v</text>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12" fill="#9aa3b5">
+    <text x="64" y="350">(0, 0)</text><text x="236" y="350">(1, 0)</text><text x="70" y="102">(0, 1)</text><text x="270" y="102" text-anchor="end">(1, 1)</text>
+  </g>
+  <!-- arrow -->
+  <path d="M330 210H430" stroke="#6b7386" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="380" y="198" fill="#9aa3b5" font-size="12" text-anchor="middle">uv attribute</text>
+  <!-- mapped onto a skewed quad in 3D -->
+  <text x="470" y="78" fill="#e7eaf0" font-size="15" font-weight="600">on the mesh</text>
+  <g transform="matrix(1 -0.18 0.35 0.9 440 150)">
+    <rect x="30" y="0" width="200" height="200" fill="url(#chk)" stroke="#e7eaf0" stroke-width="1.5"/>
+    <text x="130" y="108" fill="#12151d" font-size="64" font-weight="800" text-anchor="middle">F</text>
+  </g>
+  <g fill="#f2cc60"><circle cx="540" cy="324" r="5"/><circle cx="740" cy="288" r="5"/><circle cx="470" cy="144" r="5"/><circle cx="670" cy="108" r="5"/></g>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12" fill="#f2cc60">
+    <text x="520" y="348">uv (0, 0)</text><text x="736" y="312">uv (1, 0)</text><text x="400" y="138">uv (0, 1)</text><text x="680" y="100">uv (1, 1)</text>
+  </g>
+  <text x="70" y="392" fill="#6b7386" font-size="12">Every vertex says which point of the image it shows. In Three.js, (0, 0) is the bottom-left corner of the image.</text>
+</svg>

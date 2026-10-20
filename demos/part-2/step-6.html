@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 6 · Colour space: washed out vs correct</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+    .label { font: 600 13px/1.3 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 4px 9px; text-align: center; white-space: nowrap; }
+    .label small { display: block; font: 400 11px/1.3 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(0, 1.2, 4.4);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const labels = new CSS2DRenderer();
+    labels.setSize(innerWidth, innerHeight);
+    labels.domElement.style.cssText = 'position:absolute;inset:0;pointer-events:none';
+    document.body.appendChild(labels.domElement);
+
+    const loader = new THREE.TextureLoader();
+
+    // Left: the colour texture with no colour space set (the default)
+    const wrong = loader.load('textures/tiles-color.jpg');
+
+    // Right: the same file, tagged as sRGB
+    const right = loader.load('textures/tiles-color.jpg');
+    right.colorSpace = THREE.SRGBColorSpace;
+
+    const geometry = new THREE.BoxGeometry(1.4, 1.4, 1.4);
+
+    const cubes = [
+      [wrong, -1.2, 'no colour space<small>washed out</small>'],
+      [right, 1.2, 'SRGBColorSpace<small>correct</small>'],
+    ].map(([map, x, text]) => {
+      const cube = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ map, roughness: 0.6 }));
+      cube.position.x = x;
+      cube.rotation.set(0.4, 0.7, 0);
+      scene.add(cube);
+
+      const div = document.createElement('div');
+      div.className = 'label';
+      div.innerHTML = text;
+      const tag = new CSS2DObject(div);
+      tag.position.set(x, -1.45, 0);
+      scene.add(tag);
+      return cube;
+    });
+
+    const grid = new THREE.GridHelper(10, 20, 0x3a4258, 0x262c3b);
+    grid.position.y = -1.3;
+    scene.add(grid);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.5);
+    sun.position.set(3, 4, 2);
+    scene.add(sun);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    function onResize() {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+      labels.setSize(innerWidth, innerHeight);
+    }
+    addEventListener('resize', onResize);
+
+    renderer.setAnimationLoop((time) => {
+      for (const cube of cubes) cube.rotation.y = 0.7 + time * 0.0003;
+      controls.update();
+      renderer.render(scene, camera);
+      labels.render(scene, camera);
+    });
+  </script>
+</body>
+</html>
