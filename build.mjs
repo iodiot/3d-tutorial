@@ -65,7 +65,7 @@ function layout({ title, desc, body, canonical }) {
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(desc)}">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d12'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' text-anchor='middle' fill='%237cf5d4'%3E3D%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="${BASE}assets/style.css?v=1">
+<link rel="stylesheet" href="${BASE}assets/style.css?v=2">
 </head>
 <body>
 <div class="bg"></div>
@@ -84,6 +84,25 @@ ${body}
 </body>
 </html>
 `;
+}
+
+// "Support the series" block, shared by the index and every part.
+// Platforms come from series.json -> support.platforms: { name, url, label, image?, imageWidth?, imageHeight? }.
+// With an image the platform renders as a static image link, otherwise as a text button.
+function supportBlock() {
+  const s = series.support;
+  if (!s || !s.platforms?.length) return '';
+  const links = s.platforms.map(pl => {
+    const label = pl.label || pl.name;
+    const inner = pl.image
+      ? `<img src="${esc(pl.image)}" alt="${esc(label)}" style="height:${pl.imageHeight || 50}px;width:${pl.imageWidth ? pl.imageWidth + 'px' : 'auto'}" loading="lazy">`
+      : esc(label);
+    return `<a class="${pl.image ? 'support-img' : 'btn'}" href="${esc(pl.url)}" target="_blank" rel="noopener" title="${esc(pl.name)}">${inner}</a>`;
+  }).join('');
+  return `<aside class="support" aria-label="Support the series">
+  <p>${esc(s.text)}</p>
+  <div class="support-links">${links}</div>
+</aside>`;
 }
 
 const tagList = p => `<ul class="tags"><li class="topic">part ${p.part}</li>${p.tags.map(t => `<li>${esc(t)}</li>`).join('')}</ul>`;
@@ -117,7 +136,8 @@ function indexPage() {
 </section>
 <section class="list">
   <ol class="parts">${liveItems}${nextItems}</ol>
-</section>`,
+</section>
+${supportBlock()}`,
   });
 }
 
@@ -137,6 +157,7 @@ function partPage(p) {
   </header>
   <div class="prose">${html}</div>
   ${pager}
+  ${supportBlock()}
 </article>`,
   });
 }

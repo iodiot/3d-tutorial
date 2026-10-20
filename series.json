@@ -3,8 +3,33 @@
   "subtitle": "3D for the web with Three.js, WebGL and WebGPU",
   "lead": "A step-by-step series for frontend developers: from a first lit cube to shaders, WebGPU and compute. Every part comes with diagrams, screenshots and a live demo you can open in your browser.",
   "planned": [
-    { "part": 3, "title": "Real models, shadows and environment light", "about": "Loading glTF models, casting shadows and lighting a scene with an environment map." },
-    { "part": 4, "title": "Shaders", "about": "Writing your own GLSL, and what the GPU is actually doing." },
-    { "part": 5, "title": "WebGPU", "about": "WebGPURenderer, the TSL shading language and compute." }
-  ]
+    {
+      "part": 3,
+      "title": "Real models, shadows and environment light",
+      "about": "Loading glTF models, casting shadows and lighting a scene with an environment map."
+    },
+    {
+      "part": 4,
+      "title": "Shaders",
+      "about": "Writing your own GLSL, and what the GPU is actually doing."
+    },
+    {
+      "part": 5,
+      "title": "WebGPU",
+      "about": "WebGPURenderer, the TSL shading language and compute."
+    }
+  ],
+  "support": {
+    "text": "This series is free. If it helped you, you can support it with a coffee.",
+    "platforms": [
+      {
+        "name": "Buy Me a Coffee",
+        "url": "https://www.buymeacoffee.com/iodiot",
+        "image": "https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png",
+        "imageWidth": 181,
+        "imageHeight": 50,
+        "label": "Buy Me A Coffee"
+      }
+    ]
+  }
 }
