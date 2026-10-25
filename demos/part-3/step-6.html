@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 6 · Shadow bias lab: acne vs peter-panning</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import GUI from 'three/addons/libs/lil-gui.module.min.js';
+
+    // Start values can come from the URL, e.g. ?bias=0&normalBias=0 or ?bias=-0.01
+    const params = new URLSearchParams(location.search);
+    const number = (name, fallback) => (params.has(name) ? Number(params.get(name)) : fallback);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(-2.2, 2.4, 4.6);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.5, 0);
+    controls.enableDamping = true;
+
+    scene.add(new THREE.HemisphereLight(0xc8d4ff, 0x30281f, 0.6));
+
+    // A low sun: light that grazes a surface is where acne shows first
+    const sun = new THREE.DirectionalLight(0xffffff, 2.5);
+    sun.position.set(4, 2.6, 1.5);
+    sun.castShadow = true;
+    sun.shadow.camera.left = -2.5;
+    sun.shadow.camera.right = 2.5;
+    sun.shadow.camera.top = 2.5;
+    sun.shadow.camera.bottom = -2.5;
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 10;
+    sun.shadow.mapSize.set(number('mapSize', 1024), number('mapSize', 1024));
+    sun.shadow.bias = number('bias', 0);
+    sun.shadow.normalBias = number('normalBias', 0);
+    scene.add(sun);
+
+    // Three.js normally draws back faces into the shadow map, which hides a lot of acne
+    // on closed meshes. This lab draws front faces (like a double-sided or thin mesh would),
+    // so the problem is easy to see. Set ?side=back for the default behaviour.
+    const shadowSide = params.get('side') === 'back' ? null : THREE.FrontSide;
+
+    const material = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.7, shadowSide });
+
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(8, 0.1, 8), material(0x5d6475));
+    floor.position.y = -0.05;
+    const cube = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), material(0xc79bff));
+    cube.position.set(-0.6, 0.4, 0.4);
+    cube.rotation.y = 0.5;
+    const knot = new THREE.Mesh(new THREE.TorusKnotGeometry(0.4, 0.14, 160, 24), material(0x7cf5d4));
+    knot.position.set(0.7, 1.05, -0.3);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.35, 48, 24), material(0xf2cc60));
+    ball.position.set(0.9, 0.35, 1.1);
+
+    for (const mesh of [floor, cube, knot, ball]) {
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
+
+    const settings = { mapSize: sun.shadow.mapSize.x, frontFaces: shadowSide !== null };
+    const gui = new GUI({ title: 'Shadow bias lab' });
+    gui.add(sun.shadow, 'bias', -0.02, 0.005, 0.0001);
+    gui.add(sun.shadow, 'normalBias', 0, 0.2, 0.001);
+    gui.add(settings, 'mapSize', [256, 512, 1024, 2048, 4096]).onChange((v) => {
+      sun.shadow.mapSize.set(v, v);
+      sun.shadow.map?.dispose();
+      sun.shadow.map = null;
+    });
+    gui.add(settings, 'frontFaces').name('front faces in map').onChange((v) => {
+      for (const mesh of [floor, cube, knot, ball]) mesh.material.shadowSide = v ? THREE.FrontSide : null;
+    });
+
+    function onResize() {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+    }
+    addEventListener('resize', onResize);
+
+    renderer.setAnimationLoop(() => {
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+<script data-goatcounter="https://iodiot.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

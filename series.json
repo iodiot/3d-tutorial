@@ -4,14 +4,9 @@
   "lead": "A step-by-step series for frontend developers: from a first lit cube to shaders, WebGPU and compute. Every part comes with diagrams, screenshots and a live demo you can open in your browser.",
   "planned": [
     {
-      "part": 3,
-      "title": "Real models, shadows and environment light",
-      "about": "Loading glTF models, casting shadows and lighting a scene with an environment map."
-    },
-    {
       "part": 4,
       "title": "Shaders",
-      "about": "Writing your own GLSL, and what the GPU is actually doing."
+      "about": "ShaderMaterial and GLSL basics: writing your own shaders, and what the GPU is actually doing."
     },
     {
       "part": 5,

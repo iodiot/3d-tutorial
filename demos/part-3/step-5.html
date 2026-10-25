@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 5 · Shadows: castShadow, receiveShadow and a fitted shadow camera</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+    import GUI from 'three/addons/libs/lil-gui.module.min.js';
+
+    // ?fit=0 keeps the default shadow camera (10 × 10 units, 512 × 512 map)
+    const params = new URLSearchParams(location.search);
+    const fit = params.get('fit') !== '0';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(-1.2, 3.4, 7.2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.AgXToneMapping;
+    renderer.shadowMap.enabled = true;               // 1. the renderer has to allow shadows
+    renderer.shadowMap.type = THREE.PCFShadowMap;    // the default; BasicShadowMap and VSMShadowMap are the others
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0.6, 1.2, 0);
+    controls.enableDamping = true;
+
+    // Soft fill light from the environment. It lights everything, but it never casts shadows.
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.3;
+
+    // 2. a light that casts. Directional, so its shadow camera is orthographic: a box.
+    const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+    sun.position.set(3, 5, 2);
+    sun.castShadow = true;
+    if (fit) {
+      // Shrink the box to just cover the fox and its shadow, and use a bigger map
+      sun.shadow.camera.left = -1.6;
+      sun.shadow.camera.right = 1.6;
+      sun.shadow.camera.top = 1.6;
+      sun.shadow.camera.bottom = -1.6;
+      sun.shadow.camera.near = 3;
+      sun.shadow.camera.far = 9;
+      sun.shadow.mapSize.set(1024, 1024);
+    }
+    sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.02;
+    scene.add(sun);
+
+    // Draws the shadow camera's box, so you can see what the light can "see"
+    const helper = new THREE.CameraHelper(sun.shadow.camera);
+    helper.visible = params.get('helper') !== '0';
+    scene.add(helper);
+
+    // 3. a floor that receives
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(14, 14),
+      new THREE.MeshStandardMaterial({ color: 0x5d6475, roughness: 0.9 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // 4. the fox casts (and receives on itself). The flags live on meshes, not on the group.
+    const gltf = await new GLTFLoader().loadAsync('models/Fox.glb');
+    const model = gltf.scene;
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    model.scale.setScalar(2 / Math.max(size.x, size.y, size.z));
+    box.setFromObject(model);
+    const center = box.getCenter(new THREE.Vector3());
+    model.position.set(-center.x, -box.min.y, -center.z);
+    model.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+    scene.add(model);
+
+    const mixer = new THREE.AnimationMixer(model);
+    mixer.clipAction(gltf.animations.find((clip) => clip.name === 'Survey')).play();
+
+    const settings = { castShadow: true, helper: helper.visible, mapSize: sun.shadow.mapSize.x, type: 'PCFShadowMap', radius: 1 };
+    const gui = new GUI({ title: 'Shadows' });
+    gui.add(settings, 'castShadow').onChange((v) => { sun.castShadow = v; });
+    gui.add(settings, 'helper').name('CameraHelper').onChange((v) => { helper.visible = v; });
+    gui.add(settings, 'mapSize', [256, 512, 1024, 2048, 4096]).onChange((v) => {
+      sun.shadow.mapSize.set(v, v);
+      sun.shadow.map?.dispose();       // the old shadow texture has the old size: throw it away
+      sun.shadow.map = null;
+    });
+    gui.add(settings, 'type', ['BasicShadowMap', 'PCFShadowMap', 'VSMShadowMap']).onChange((v) => {
+      renderer.shadowMap.type = THREE[v];
+    });
+    gui.add(settings, 'radius', 0, 8, 0.1).name('shadow.radius').onChange((v) => { sun.shadow.radius = v; });
+
+    function onResize() {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+    }
+    addEventListener('resize', onResize);
+
+    const timer = new THREE.Timer();
+
+    renderer.setAnimationLoop((time) => {
+      timer.update(time);
+      mixer.update(timer.getDelta());
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+<script data-goatcounter="https://iodiot.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

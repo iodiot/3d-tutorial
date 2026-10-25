@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 440" width="880" height="440" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs>
+    <marker id="y" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f2cc60"/></marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7386"/></marker>
+  </defs>
+  <rect width="880" height="440" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">A SHADOW MAP: THE SCENE SEEN FROM THE LIGHT</text>
+  <!-- left: side view -->
+  <circle cx="72" cy="86" r="16" fill="#f2cc60"/>
+  <g stroke="#f2cc60" stroke-width="2"><path d="M72 62V56M72 116V110M48 86H42M102 86H96M55 69L51 65M93 107L89 103M55 103L51 107M93 69L89 65"/></g>
+  <path d="M100 74H236" stroke="#f2cc60" stroke-width="2" stroke-dasharray="6 5"/>
+  <text x="100" y="66" fill="#9aa3b5" font-size="12">shadow camera (orthographic)</text>
+  <!-- rays: direction dx = 0.6 dy -->
+  <path d="M140 74L250 257.3" stroke="#f2cc60" stroke-width="1.5" marker-end="url(#y)"/>
+  <path d="M250 257.3L300 340" stroke="#ff7a85" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <path d="M220 74L380 340" stroke="#f2cc60" stroke-width="1.5" marker-end="url(#y)"/>
+  <!-- ground and box -->
+  <path d="M40 340H430" stroke="#e7eaf0" stroke-width="2"/>
+  <path d="M250 340H334" stroke="#4a5163" stroke-width="10"/>
+  <rect x="200" y="200" width="50" height="140" fill="#c79bff" fill-opacity=".25" stroke="#c79bff" stroke-width="2"/>
+  <circle cx="250" cy="257.3" r="5" fill="#f2cc60"/>
+  <text x="196" y="190" fill="#c79bff" font-size="13" font-weight="600">box</text>
+  <text x="260" y="250" fill="#f2cc60" font-size="12">first hit: depth 0.42</text>
+  <circle cx="300" cy="340" r="6" fill="#ff7a85"/><text x="292" y="368" fill="#ff7a85" font-size="13" font-weight="700">P</text>
+  <circle cx="380" cy="340" r="6" fill="#7cf5d4"/><text x="374" y="368" fill="#7cf5d4" font-size="13" font-weight="700">Q</text>
+  <text x="40" y="406" fill="#6b7386" font-size="12">Side view. The light only sees the first thing along each ray.</text>
+  <!-- right: shadow map -->
+  <text x="470" y="88" fill="#e7eaf0" font-size="14" font-weight="600">Pass 1: render depth from the light</text>
+  <g stroke="#12151d" stroke-width="2">
+    <rect x="470" y="104" width="34" height="34" fill="#8b93a4"/><rect x="504" y="104" width="34" height="34" fill="#8b93a4"/><rect x="538" y="104" width="34" height="34" fill="#8b93a4"/><rect x="572" y="104" width="34" height="34" fill="#8b93a4"/><rect x="606" y="104" width="34" height="34" fill="#8b93a4"/><rect x="640" y="104" width="34" height="34" fill="#8b93a4"/>
+    <rect x="470" y="138" width="34" height="34" fill="#8b93a4"/><rect x="504" y="138" width="34" height="34" fill="#3d4352"/><rect x="538" y="138" width="34" height="34" fill="#3d4352"/><rect x="572" y="138" width="34" height="34" fill="#8b93a4"/><rect x="606" y="138" width="34" height="34" fill="#8b93a4"/><rect x="640" y="138" width="34" height="34" fill="#8b93a4"/>
+    <rect x="470" y="172" width="34" height="34" fill="#8b93a4"/><rect x="504" y="172" width="34" height="34" fill="#3d4352"/><rect x="538" y="172" width="34" height="34" fill="#3d4352"/><rect x="572" y="172" width="34" height="34" fill="#8b93a4"/><rect x="606" y="172" width="34" height="34" fill="#8b93a4"/><rect x="640" y="172" width="34" height="34" fill="#8b93a4"/>
+    <rect x="470" y="206" width="34" height="34" fill="#8b93a4"/><rect x="504" y="206" width="34" height="34" fill="#8b93a4"/><rect x="538" y="206" width="34" height="34" fill="#8b93a4"/><rect x="572" y="206" width="34" height="34" fill="#8b93a4"/><rect x="606" y="206" width="34" height="34" fill="#8b93a4"/><rect x="640" y="206" width="34" height="34" fill="#8b93a4"/>
+  </g>
+  <text x="690" y="132" fill="#9aa3b5" font-size="12">a depth texture,</text>
+  <text x="690" y="150" fill="#9aa3b5" font-size="12">mapSize × mapSize texels</text>
+  <text x="690" y="178" fill="#e7eaf0" font-size="12">dark = near the light</text>
+  <text x="690" y="196" fill="#e7eaf0" font-size="12">(the box)</text>
+  <text x="690" y="224" fill="#e7eaf0" font-size="12">light = far (the ground)</text>
+  <text x="470" y="282" fill="#e7eaf0" font-size="14" font-weight="600">Pass 2: draw the scene from your camera</text>
+  <text x="470" y="304" fill="#9aa3b5" font-size="12">For each pixel, find its spot in the map and compare depths:</text>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13">
+    <rect x="470" y="318" width="380" height="34" rx="10" fill="#2a1820" stroke="#ff7a85" stroke-width="1.5"/>
+    <text x="484" y="340" fill="#ff7a85">P: 0.61 &gt; stored 0.42 → in shadow</text>
+    <rect x="470" y="362" width="380" height="34" rx="10" fill="#0f2a24" stroke="#7cf5d4" stroke-width="1.5"/>
+    <text x="484" y="384" fill="#7cf5d4">Q: 0.70 = stored 0.70 → lit</text>
+  </g>
+</svg>

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loading glTF models, shadows and environment lighting · final demo</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+    #status { position: absolute; left: 12px; top: 12px; font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; }
+    #status.error { color: #ff7a85; border-color: #ff7a85; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status">Loading…</div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+    import GUI from 'three/addons/libs/lil-gui.module.min.js';
+
+    const status = document.getElementById('status');
+
+    // Scene and camera
+    const scene = new THREE.Scene();
+    const backgroundColor = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(2.8, 1.5, 3.6);
+
+    // Renderer: tone mapping for the HDR light, shadows switched on
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1;
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.55, 0);
+    controls.enableDamping = true;
+    controls.maxPolarAngle = Math.PI / 2 - 0.05;   // stay above the ground
+    controls.minDistance = 1.5;
+    controls.maxDistance = 10;
+
+    // Load the model and the HDR at the same time, and say so if either fails
+    let gltf, hdrTexture;
+    try {
+      [gltf, hdrTexture] = await Promise.all([
+        new GLTFLoader().loadAsync('models/Fox.glb'),
+        new HDRLoader().loadAsync('textures/rosendal_plains_2_1k.hdr'),
+      ]);
+    } catch (error) {
+      status.className = 'error';
+      status.textContent = `Loading failed: ${error.message}`;
+      throw error;
+    }
+    status.remove();
+
+    // Environments: the HDR photo, or the procedural room
+    hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const roomTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
+
+    // The fox: fit to 2 units, stand it on the ground, let every mesh cast a shadow
+    const model = gltf.scene;
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    model.scale.setScalar(2 / Math.max(size.x, size.y, size.z));
+    box.setFromObject(model);
+    const center = box.getCenter(new THREE.Vector3());
+    model.position.set(-center.x, -box.min.y, -center.z);
+    model.traverse((child) => {
+      if (child.isMesh) child.castShadow = true;
+    });
+    scene.add(model);
+
+    // Animation
+    const mixer = new THREE.AnimationMixer(model);
+    const actions = {};
+    for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
+    let current = actions.Walk;
+    current.play();
+
+    // A ground that is invisible except for the shadows that land on it
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(12, 12),
+      new THREE.ShadowMaterial({ color: 0x000000, opacity: 0.4 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // The one light that casts shadows, with its shadow camera fitted around the fox
+    const sun = new THREE.DirectionalLight(0xffffff, 2);
+    sun.position.set(2.5, 5, 2);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    Object.assign(sun.shadow.camera, { left: -2, right: 2, top: 2, bottom: -2, near: 2, far: 10 });
+    sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.02;
+    sun.shadow.radius = 3;
+    scene.add(sun);
+
+    const helper = new THREE.CameraHelper(sun.shadow.camera);
+    helper.visible = false;
+    scene.add(helper);
+
+    // Everything the panel can change
+    const settings = {
+      environment: 'HDR photo',
+      background: 'blurred HDR',
+      blurriness: 0.35,
+      environmentIntensity: 1,
+      toneMapping: 'ACES Filmic',
+      exposure: 1,
+      shadows: true,
+      bias: sun.shadow.bias,
+      shadowOpacity: 0.4,
+      helper: false,
+      clip: 'Walk',
+      speed: 1,
+    };
+
+    const toneMappings = {
+      'ACES Filmic': THREE.ACESFilmicToneMapping,
+      AgX: THREE.AgXToneMapping,
+      Neutral: THREE.NeutralToneMapping,
+      None: THREE.NoToneMapping,
+    };
+
+    function applyEnvironment() {
+      scene.environment = { 'HDR photo': hdrTexture, RoomEnvironment: roomTexture, none: null }[settings.environment];
+      scene.environmentIntensity = settings.environmentIntensity;
+      const hdrBackground = settings.background !== 'flat colour' && settings.environment === 'HDR photo';
+      scene.background = hdrBackground ? hdrTexture : backgroundColor;
+      scene.backgroundBlurriness = settings.background === 'blurred HDR' ? settings.blurriness : 0;
+    }
+    applyEnvironment();
+
+    const gui = new GUI({ title: 'Part 3 controls' });
+
+    const envFolder = gui.addFolder('Environment');
+    envFolder.add(settings, 'environment', ['HDR photo', 'RoomEnvironment', 'none']).onChange(applyEnvironment);
+    envFolder.add(settings, 'background', ['blurred HDR', 'sharp HDR', 'flat colour']).onChange(applyEnvironment);
+    envFolder.add(settings, 'blurriness', 0, 1, 0.01).onChange(applyEnvironment);
+    envFolder.add(settings, 'environmentIntensity', 0, 3, 0.05).name('intensity').onChange(applyEnvironment);
+
+    const toneFolder = gui.addFolder('Tone mapping');
+    toneFolder.add(settings, 'toneMapping', Object.keys(toneMappings)).onChange((v) => { renderer.toneMapping = toneMappings[v]; });
+    toneFolder.add(settings, 'exposure', 0, 3, 0.05).onChange((v) => { renderer.toneMappingExposure = v; });
+
+    const shadowFolder = gui.addFolder('Shadows');
+    shadowFolder.add(settings, 'shadows').onChange((v) => { sun.castShadow = v; });
+    shadowFolder.add(settings, 'bias', -0.01, 0.005, 0.0001).onChange((v) => { sun.shadow.bias = v; });
+    shadowFolder.add(settings, 'shadowOpacity', 0, 1, 0.01).name('ground opacity').onChange((v) => { ground.material.opacity = v; });
+    shadowFolder.add(settings, 'helper').name('shadow camera').onChange((v) => { helper.visible = v; });
+
+    const animFolder = gui.addFolder('Animation');
+    animFolder.add(settings, 'clip', Object.keys(actions)).onChange((name) => {
+      const next = actions[name];
+      if (next === current) return;
+      next.reset().play();
+      current.crossFadeTo(next, 0.4);
+      current = next;
+    });
+    animFolder.add(settings, 'speed', 0, 2, 0.05).onChange((v) => { mixer.timeScale = v; });
+
+    if (innerWidth < 700) gui.close();
+
+    function onResize() {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+    }
+    addEventListener('resize', onResize);
+
+    const timer = new THREE.Timer();
+
+    renderer.setAnimationLoop((time) => {
+      timer.update(time);
+      mixer.update(timer.getDelta());
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+<script data-goatcounter="https://iodiot.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

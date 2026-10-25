@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 1 · Loading a glTF model and fitting it with Box3</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+    .panel.error { color: #ff7a85; border-color: #ff7a85; white-space: normal; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel">Loading Fox.glb…</div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // ?fit=0 skips the Box3 step, so you can see the model at its native size
+    const fit = new URLSearchParams(location.search).get('fit') !== '0';
+    const status = document.getElementById('status');
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(2.4, 1.6, 3.2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.GridHelper(10, 20, 0x3a4258, 0x262c3b));
+
+    // The same two lights as Part 1
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.5);
+    sun.position.set(3, 4, 2);
+    scene.add(sun);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.5, 0);
+    controls.enableDamping = true;
+
+    // Load the file. loadAsync returns a promise, so we can await it and catch failures.
+    const loader = new GLTFLoader();
+    let gltf;
+    try {
+      gltf = await loader.loadAsync('models/Fox.glb', (event) => {
+        if (event.total) status.textContent = `Loading Fox.glb… ${Math.round(event.loaded / event.total * 100)}%`;
+      });
+    } catch (error) {
+      status.className = 'panel error';
+      status.textContent = `Could not load models/Fox.glb: ${error.message}`;
+      throw error;
+    }
+
+    const model = gltf.scene;
+
+    // Walk the scene graph: print every node, and count what is inside
+    function printTree(object, depth = 0) {
+      console.log(`${'  '.repeat(depth)}${object.type} "${object.name}"`);
+      for (const child of object.children) printTree(child, depth + 1);
+    }
+    printTree(model);
+
+    let meshes = 0;
+    let bones = 0;
+    model.traverse((child) => {
+      if (child.isMesh) meshes++;
+      if (child.isBone) bones++;
+    });
+
+    // Measure the model in world units
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    let scale = 1;
+
+    if (fit) {
+      // Scale so the longest side is 2 units, then stand it on the floor at the origin
+      scale = 2 / Math.max(size.x, size.y, size.z);
+      model.scale.setScalar(scale);
+
+      box.setFromObject(model);
+      const center = box.getCenter(new THREE.Vector3());
+      model.position.x -= center.x;
+      model.position.z -= center.z;
+      model.position.y -= box.min.y;
+    }
+
+    scene.add(model);
+    scene.add(new THREE.Box3Helper(new THREE.Box3().setFromObject(model), 0xf2cc60));
+
+    status.textContent = [
+      `Fox.glb: ${meshes} mesh, ${bones} bones, ${gltf.animations.length} clips`,
+      `native size: ${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)}`,
+      fit ? `scaled ×${scale.toFixed(4)} to fit 2 units` : 'not scaled (?fit=0)',
+    ].join('\n');
+
+    function onResize() {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+    }
+    addEventListener('resize', onResize);
+
+    renderer.setAnimationLoop(() => {
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+<script data-goatcounter="https://iodiot.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

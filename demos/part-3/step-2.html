@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 2 · Playing the model's animations with AnimationMixer</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import GUI from 'three/addons/libs/lil-gui.module.min.js';
+
+    const params = new URLSearchParams(location.search);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(2.4, 1.6, 3.2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.GridHelper(10, 20, 0x3a4258, 0x262c3b));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.5);
+    sun.position.set(3, 4, 2);
+    scene.add(sun);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.5, 0);
+    controls.enableDamping = true;
+
+    // Same loading and fitting as step 1
+    const gltf = await new GLTFLoader().loadAsync('models/Fox.glb');
+    const model = gltf.scene;
+
+    function fitToSize(object, size) {
+      const box = new THREE.Box3().setFromObject(object);
+      const dimensions = box.getSize(new THREE.Vector3());
+      object.scale.setScalar(size / Math.max(dimensions.x, dimensions.y, dimensions.z));
+      box.setFromObject(object);
+      const center = box.getCenter(new THREE.Vector3());
+      object.position.x -= center.x;
+      object.position.z -= center.z;
+      object.position.y -= box.min.y;
+    }
+    fitToSize(model, 2);
+    scene.add(model);
+
+    // The bones, drawn as lines. Hidden until you tick the box.
+    const skeleton = new THREE.SkeletonHelper(model);
+    skeleton.visible = params.get('skeleton') === '1';
+    scene.add(skeleton);
+
+    // One mixer per animated model, one action per clip
+    const mixer = new THREE.AnimationMixer(model);
+    const actions = {};
+    for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
+
+    const settings = { clip: params.get('clip') || 'Walk', speed: 1, skeleton: skeleton.visible };
+    let current = actions[settings.clip];
+    current.play();
+
+    function play(name) {
+      const next = actions[name];
+      if (next === current) return;
+      next.reset().play();               // start the new clip from frame 0...
+      current.crossFadeTo(next, 0.4);    // ...and blend into it over 0.4 seconds
+      current = next;
+    }
+
+    const gui = new GUI({ title: 'Animation' });
+    gui.add(settings, 'clip', Object.keys(actions)).onChange(play);
+    gui.add(settings, 'speed', 0, 2, 0.05).onChange((v) => { mixer.timeScale = v; });
+    gui.add(settings, 'skeleton').onChange((v) => { skeleton.visible = v; });
+
+    function onResize() {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+    }
+    addEventListener('resize', onResize);
+
+    // The mixer needs seconds since the last frame. THREE.Timer gives us that.
+    const timer = new THREE.Timer();
+
+    renderer.setAnimationLoop((time) => {
+      timer.update(time);
+      mixer.update(timer.getDelta());
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+<script data-goatcounter="https://iodiot.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

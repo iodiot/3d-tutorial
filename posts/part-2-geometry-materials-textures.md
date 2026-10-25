@@ -600,4 +600,4 @@ The step-by-step versions are in the repo too: [step-1.html](/3d-tutorial/demos/
 
 ## Next time
 
-We now know what a mesh is made of, and we can make a surface look like a material instead of a colour. But writing vertices by hand only goes so far, and our cube still does not cast a shadow on its own floor. In Part 3 we load real models made in Blender and other tools (glTF, the "JPEG of 3D"), turn on shadows, and light the whole scene with an environment map, the proper version of the `RoomEnvironment` trick from this article. See you there.
+We now know what a mesh is made of, and we can make a surface look like a material instead of a colour. But writing vertices by hand only goes so far, and our cube still does not cast a shadow on its own floor. In [Part 3](/3d-tutorial/part-3-models-shadows-environment/) we load real models made in Blender and other tools (glTF, the "JPEG of 3D"), turn on shadows, and light the whole scene with an environment map, the proper version of the `RoomEnvironment` trick from this article. See you there.
