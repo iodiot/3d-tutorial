@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 440" width="880" height="440" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7386"/></marker>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3f6fb5"/><stop offset=".45" stop-color="#b9cde6"/><stop offset=".55" stop-color="#9c8a5e"/><stop offset="1" stop-color="#5a4a30"/></linearGradient>
+    <g id="pano"><rect width="70" height="70" fill="url(#sky)"/><circle cx="48" cy="18" r="6" fill="#fff7d6"/><path d="M0 38C12 33 24 36 36 34C50 31 60 35 70 34V40H0Z" fill="#6f7a52"/></g>
+    <filter id="b1" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.5"/></filter>
+    <filter id="b2" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="7"/></filter>
+    <clipPath id="c"><rect width="70" height="70" rx="6"/></clipPath>
+    <radialGradient id="chrome" cx=".4" cy=".35" r=".7"><stop offset="0" stop-color="#ffffff"/><stop offset=".25" stop-color="#b9cde6"/><stop offset=".5" stop-color="#3f6fb5"/><stop offset=".62" stop-color="#9c8a5e"/><stop offset="1" stop-color="#2a2418"/></radialGradient>
+    <radialGradient id="matte" cx=".42" cy=".38" r=".7"><stop offset="0" stop-color="#f4f1ea"/><stop offset=".6" stop-color="#b9b3a2"/><stop offset="1" stop-color="#5d5747"/></radialGradient>
+  </defs>
+  <rect width="880" height="440" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">IMAGE-BASED LIGHTING: THE WHOLE SURROUNDING IS THE LIGHT</text>
+  <!-- source -->
+  <rect x="32" y="96" width="180" height="90" rx="8" fill="url(#sky)"/>
+  <circle cx="160" cy="118" r="8" fill="#fff7d6"/>
+  <path d="M32 146C70 138 100 142 130 139C160 136 190 142 212 140V150H32Z" fill="#6f7a52"/>
+  <text x="32" y="210" fill="#e7eaf0" font-size="13" font-weight="600">HDR photo, equirectangular</text>
+  <text x="32" y="228" fill="#9aa3b5" font-size="12">or RoomEnvironment, a tiny scene</text>
+  <path d="M218 141H262" stroke="#6b7386" stroke-width="1.5" marker-end="url(#a)"/>
+  <!-- pmrem -->
+  <rect x="266" y="106" width="150" height="70" rx="12" fill="#0f2a24" stroke="#7cf5d4" stroke-width="2"/>
+  <text x="341" y="136" fill="#7cf5d4" font-size="13" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle">PMREMGenerator</text>
+  <text x="341" y="156" fill="#9aa3b5" font-size="11" text-anchor="middle">pre-blurs it once</text>
+  <path d="M416 141H452" stroke="#6b7386" stroke-width="1.5" marker-end="url(#a)"/>
+  <!-- levels -->
+  <g transform="translate(458 106)"><g clip-path="url(#c)"><use href="#pano"/></g></g>
+  <g transform="translate(540 106)"><g clip-path="url(#c)"><g filter="url(#b1)"><use href="#pano"/></g></g></g>
+  <g transform="translate(622 106)"><g clip-path="url(#c)"><g filter="url(#b2)"><use href="#pano"/></g></g></g>
+  <g font-size="11" fill="#9aa3b5" text-anchor="middle"><text x="493" y="194">roughness 0</text><text x="575" y="194">0.5</text><text x="657" y="194">1</text></g>
+  <text x="458" y="214" fill="#9aa3b5" font-size="12">one sharp-to-blurry level per roughness</text>
+  <path d="M700 141H736" stroke="#6b7386" stroke-width="1.5" marker-end="url(#a)"/>
+  <!-- spheres -->
+  <circle cx="770" cy="124" r="26" fill="url(#chrome)"/>
+  <circle cx="826" cy="160" r="26" fill="url(#matte)"/>
+  <text x="742" y="208" fill="#9aa3b5" font-size="11">shiny reads level 0,</text>
+  <text x="742" y="224" fill="#9aa3b5" font-size="11">rough reads a blurry one</text>
+  <!-- bottom -->
+  <rect x="32" y="262" width="400" height="92" rx="12" fill="#171b25" stroke="#f2cc60" stroke-width="1.5"/>
+  <text x="50" y="290" fill="#f2cc60" font-size="13" font-family="ui-monospace,Menlo,Consolas,monospace">scene.environment = texture</text>
+  <text x="50" y="312" fill="#e7eaf0" font-size="12">Lights and reflects in every MeshStandardMaterial</text>
+  <text x="50" y="330" fill="#e7eaf0" font-size="12">and MeshPhysicalMaterial. Invisible on its own.</text>
+  <rect x="448" y="262" width="400" height="92" rx="12" fill="#171b25" stroke="#c79bff" stroke-width="1.5"/>
+  <text x="466" y="290" fill="#c79bff" font-size="13" font-family="ui-monospace,Menlo,Consolas,monospace">scene.background = texture</text>
+  <text x="466" y="312" fill="#e7eaf0" font-size="12">Only paints the picture behind everything.</text>
+  <text x="466" y="330" fill="#e7eaf0" font-size="12">backgroundBlurriness picks a blurrier level.</text>
+  <text x="32" y="394" fill="#6b7386" font-size="12">Environment light comes from everywhere at once, so it has no direction and never casts shadows.</text>
+  <text x="32" y="412" fill="#6b7386" font-size="12">For shadows, add a DirectionalLight that roughly matches the brightest part of the picture (the sun).</text>
+</svg>

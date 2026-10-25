@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 430" width="880" height="430" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs>
+    <marker id="y" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f2cc60"/></marker>
+  </defs>
+  <rect width="880" height="430" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">SHADOW BIAS: ACNE VS PETER-PANNING</text>
+  <!-- panel 1 -->
+  <text x="40" y="84" fill="#ff7a85" font-size="14" font-weight="600">No bias: shadow acne</text>
+  <g stroke="#f2cc60" stroke-width="1.5" marker-end="url(#y)"><path d="M74 104V140"/><path d="M162 104V140"/><path d="M250 104V140"/></g>
+  <text x="96" y="126" fill="#9aa3b5" font-size="11">light</text>
+  <g stroke="#f2cc60" stroke-width="2" stroke-dasharray="5 3">
+    <path d="M52 308H96"/><path d="M96 284H140"/><path d="M140 260H184"/><path d="M184 236H228"/><path d="M228 212H272"/>
+  </g>
+  <g stroke-width="5" stroke-linecap="butt">
+    <path d="M52 320L74 308" stroke="#ff7a85"/><path d="M74 308L96 296" stroke="#7cf5d4"/>
+    <path d="M96 296L118 284" stroke="#ff7a85"/><path d="M118 284L140 272" stroke="#7cf5d4"/>
+    <path d="M140 272L162 260" stroke="#ff7a85"/><path d="M162 260L184 248" stroke="#7cf5d4"/>
+    <path d="M184 248L206 236" stroke="#ff7a85"/><path d="M206 236L228 224" stroke="#7cf5d4"/>
+    <path d="M228 224L250 212" stroke="#ff7a85"/><path d="M250 212L272 200" stroke="#7cf5d4"/>
+  </g>
+  <text x="40" y="352" fill="#e7eaf0" font-size="12">Each texel stores one depth (yellow).</text>
+  <text x="40" y="370" fill="#e7eaf0" font-size="12">Half of every texel sits just behind it,</text>
+  <text x="40" y="388" fill="#e7eaf0" font-size="12">so the surface shadows itself in stripes.</text>
+  <!-- panel 2 -->
+  <text x="320" y="84" fill="#7cf5d4" font-size="14" font-weight="600">Small bias: clean</text>
+  <g stroke="#f2cc60" stroke-width="1.5" marker-end="url(#y)"><path d="M354 104V140"/><path d="M442 104V140"/><path d="M530 104V140"/></g>
+  <g stroke="#f2cc60" stroke-width="2" stroke-dasharray="5 3">
+    <path d="M332 330H376"/><path d="M376 306H420"/><path d="M420 282H464"/><path d="M464 258H508"/><path d="M508 234H552"/>
+  </g>
+  <path d="M332 320L552 200" stroke="#7cf5d4" stroke-width="5"/>
+  <text x="320" y="352" fill="#e7eaf0" font-size="12">The bias moves the comparison a</text>
+  <text x="320" y="370" fill="#e7eaf0" font-size="12">tiny step, so the stored depths end</text>
+  <text x="320" y="388" fill="#e7eaf0" font-size="12">up just past the surface. All lit.</text>
+  <!-- panel 3 -->
+  <text x="600" y="84" fill="#ff7a85" font-size="14" font-weight="600">Too much bias: peter-panning</text>
+  <g stroke="#f2cc60" stroke-width="1.5"><path d="M594 110L660 220"/><path d="M624 110L750 320"/><path d="M674 110L800 320"/></g>
+  <path d="M600 320H856" stroke="#e7eaf0" stroke-width="2"/>
+  <rect x="640" y="220" width="50" height="100" fill="#c79bff" fill-opacity=".25" stroke="#c79bff" stroke-width="2"/>
+  <path d="M690 320H750" stroke="#4a5163" stroke-width="10" stroke-opacity=".35" stroke-dasharray="4 3"/>
+  <path d="M722 320H778" stroke="#4a5163" stroke-width="10"/>
+  <path d="M691 334H721" stroke="#ff7a85" stroke-width="2"/><path d="M691 328V340M721 328V340" stroke="#ff7a85" stroke-width="2"/>
+  <text x="706" y="354" fill="#ff7a85" font-size="12" font-weight="600" text-anchor="middle">gap</text>
+  <text x="600" y="370" fill="#e7eaf0" font-size="12">The shadow slides away from the</text>
+  <text x="600" y="388" fill="#e7eaf0" font-size="12">contact point: the box seems to float.</text>
+  <text x="40" y="414" fill="#6b7386" font-size="12">In three.js: start with shadow.bias = 0 and normalBias = 0, add a little until the stripes go, then stop.</text>
+</svg>

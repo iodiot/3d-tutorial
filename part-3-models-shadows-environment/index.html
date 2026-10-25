@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Three.js from Scratch, Part 3: Loading glTF Models, Shadows and Environment Lighting — Mike Smahin</title>
+<meta name="description" content="Load an animated glTF model, fit it to your scene with Box3, play its clips with AnimationMixer, light it with an HDR environment and tone mapping, and get directional-light shadows that actually look right. With diagrams, screenshots and a live demo.">
+<link rel="canonical" href="https://iodiot.github.io/3d-tutorial/part-3-models-shadows-environment/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Three.js from Scratch, Part 3: Loading glTF Models, Shadows and Environment Lighting — Mike Smahin">
+<meta property="og:description" content="Load an animated glTF model, fit it to your scene with Box3, play its clips with AnimationMixer, light it with an HDR environment and tone mapping, and get directional-light shadows that actually look right. With diagrams, screenshots and a live demo.">
+<meta property="og:url" content="https://iodiot.github.io/3d-tutorial/part-3-models-shadows-environment/">
+<meta property="og:image" content="https://iodiot.github.io/3d-tutorial/images/part-3/social-card.png">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d12'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' text-anchor='middle' fill='%237cf5d4'%3E3D%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/3d-tutorial/assets/style.css?v=2">
+</head>
+<body>
+<div class="bg"></div>
+<header class="nav">
+  <a class="brand" href="/">Mike Smahin</a>
+  <nav>
+    <a href="/3d-tutorial/">3D Tutorial</a>
+    <a href="/blog/">Blog</a>
+    <a href="/">Portfolio</a>
+  </nav>
+</header>
+<main>
+<article class="post">
+  <header class="post-head">
+    <p class="eyebrow"><a href="/3d-tutorial/">← Three.js from Scratch · all parts</a></p>
+    <h1>Three.js from Scratch, Part 3: Loading glTF Models, Shadows and Environment Lighting</h1>
+    <p class="meta-line"><time datetime="2026-10-25">Oct 25, 2026</time> · Mike Smahin</p>
+    <ul class="tags"><li class="topic">part 3</li><li>three.js</li><li>gltf</li><li>shadows</li><li>lighting</li></ul>
+  </header>
+  <div class="prose"><p>In <a href="/3d-tutorial/part-2-geometry-materials-textures/">Part 2</a> we opened up a mesh and looked at what it is made of: vertices, normals and UVs, materials, and textures in the right colour space. Everything in that scene was built by hand in code. Real projects do not work like that. Characters, products and buildings come from Blender, Maya or a 3D scanner, they arrive as files, and they are usually animated.</p>
+<p>In this article we load one of those files: a small low-poly fox, with a skeleton and three animations. We fit it into our scene, make it walk, light it with a photo of a real sky instead of hand-placed lights, and give it a proper shadow on the ground. Shadows are where most people get stuck, so they get the most space here, including the two classic artefacts (stripes and floating objects) and how to tune them away. The panel in the corner switches the environment, the tone mapping and the shadows, so you can see what each one adds:</p>
+<div class="demo">
+  <iframe src="/3d-tutorial/demos/part-3/" title="Live demo: an animated low-poly fox walking on an invisible ground with a soft shadow, lit by an HDR photo of grassland, with a panel to switch environment, tone mapping, exposure, shadows and shadow bias" loading="lazy"></iframe>
+</div>
+<p class="demo-links"><a href="/3d-tutorial/demos/part-3/" target="_blank" rel="noopener">Open the demo full screen ↗</a> · <a href="https://github.com/iodiot/3d-tutorial/tree/main/demos/part-3" target="_blank" rel="noopener">Source on GitHub ↗</a></p>
+<blockquote>
+<p>As in Parts 1 and 2, everything here uses Three.js <strong>r186</strong> (npm version <code>0.186.1</code>) through the same import map. Every step below is a single HTML file you can open from the repo. This time the steps also load files (a model and an HDR image), so they have to be served over HTTP; opening them with <code>file://</code> will not work. More on that in the full code section at the end.</p>
+</blockquote>
+<h2>glTF: the JPEG of 3D</h2>
+<p>There are many 3D file formats (OBJ, FBX, Collada, USD, STL...), and Three.js has loaders for most of them. For the web, though, the answer is almost always <strong>glTF</strong> (GL Transmission Format), an open standard from the Khronos Group, the same people behind OpenGL and WebGL. It is often called &quot;the JPEG of 3D&quot;: it is meant for delivering finished assets to a renderer, not for editing them.</p>
+<p>A glTF file can hold:</p>
+<ul>
+<li>a <strong>scene graph</strong>: nodes with position, rotation and scale, parented to each other, exactly like <code>Object3D</code> in Three.js;</li>
+<li><strong>meshes</strong>: geometry as typed arrays, ready to go to the GPU almost as they are (the same <code>position</code>, <code>normal</code> and <code>uv</code> attributes from Part 2);</li>
+<li><strong>materials</strong> in the metallic-roughness PBR model, which is what <code>MeshStandardMaterial</code> implements, so they map across one to one;</li>
+<li><strong>textures</strong>, <strong>skins</strong> (skeletons for characters), <strong>animations</strong>, <strong>cameras</strong> and, through extensions, lights and more advanced materials.</li>
+</ul>
+<p>It comes in two flavours. A <code>.gltf</code> file is JSON that points at separate <code>.bin</code> (geometry) and image files. A <code>.glb</code> is the same thing packed into one binary file. For the web, <code>.glb</code> is usually simpler: one request, nothing to lose on the way.</p>
+<p>Our model is the <strong>Fox</strong> from the Khronos <a href="https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox" target="_blank" rel="noopener">glTF Sample Assets</a> repository: one skinned mesh, 24 bones, one texture and three animation clips, in a 160 KB <code>.glb</code>. It is freely licensed (credits are at the end of this article and in the repo).</p>
+<h2>Loading a model with GLTFLoader</h2>
+<p><code>GLTFLoader</code> is an addon, so it comes from <code>three/addons/</code>, like <code>OrbitControls</code>:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">GLTFLoader</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/loaders/GLTFLoader.js&#x27;</span>;
+
+<span class="hljs-keyword">const</span> loader = <span class="hljs-keyword">new</span> <span class="hljs-title class_">GLTFLoader</span>();
+<span class="hljs-keyword">const</span> gltf = <span class="hljs-keyword">await</span> loader.<span class="hljs-title function_">loadAsync</span>(<span class="hljs-string">&#x27;models/Fox.glb&#x27;</span>);
+scene.<span class="hljs-title function_">add</span>(gltf.<span class="hljs-property">scene</span>);
+</code></pre>
+<p><code>loadAsync</code> returns a promise, so we can <code>await</code> it. A module script (<code>&lt;script type=&quot;module&quot;&gt;</code>) allows <code>await</code> at the top level, so there is no need to wrap everything in an <code>async</code> function. Older examples use <code>loader.load(url, onLoad, onProgress, onError)</code> with callbacks; it does the same thing, but the promise version is much easier to read once you load more than one file.</p>
+<p>Loading can fail: a typo in the path, a server that returns an HTML 404 page instead of the file, a missing decoder. If you do nothing, you get an empty scene and an error in the console that nobody sees. So wrap it, and tell the user:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">let</span> gltf;
+<span class="hljs-keyword">try</span> {
+  gltf = <span class="hljs-keyword">await</span> loader.<span class="hljs-title function_">loadAsync</span>(<span class="hljs-string">&#x27;models/Fox.glb&#x27;</span>, <span class="hljs-function">(<span class="hljs-params">event</span>) =&gt;</span> {
+    <span class="hljs-comment">// Called while the file downloads. total is 0 if the server does not send a size.</span>
+    <span class="hljs-keyword">if</span> (event.<span class="hljs-property">total</span>) status.<span class="hljs-property">textContent</span> = <span class="hljs-string">`Loading Fox.glb… <span class="hljs-subst">${<span class="hljs-built_in">Math</span>.round(event.loaded / event.total * <span class="hljs-number">100</span>)}</span>%`</span>;
+  });
+} <span class="hljs-keyword">catch</span> (error) {
+  status.<span class="hljs-property">className</span> = <span class="hljs-string">&#x27;panel error&#x27;</span>;
+  status.<span class="hljs-property">textContent</span> = <span class="hljs-string">`Could not load models/Fox.glb: <span class="hljs-subst">${error.message}</span>`</span>;
+  <span class="hljs-keyword">throw</span> error;   <span class="hljs-comment">// stop here: nothing below makes sense without the model</span>
+}
+</code></pre>
+<p>The second argument of <code>loadAsync</code> is a progress callback. It is worth wiring up for large files, because a blank screen for five seconds looks exactly like a broken page.</p>
+<p>What comes back is not a mesh but an object describing the whole file:</p>
+<ul>
+<li><code>gltf.scene</code>: a <code>Group</code> with the default scene of the file. This is what you add to your own scene.</li>
+<li><code>gltf.scenes</code>: all scenes, if the file has more than one (rare).</li>
+<li><code>gltf.animations</code>: an array of <code>AnimationClip</code>s. They are <strong>not</strong> attached to anything yet; we will play them in a moment.</li>
+<li><code>gltf.cameras</code>: cameras defined in the file, if any.</li>
+<li><code>gltf.asset</code>: metadata, such as which tool exported it.</li>
+</ul>
+<p>When you need several files, start them all at once instead of one after another. The final demo loads the model and the HDR in parallel:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> [gltf, hdrTexture] = <span class="hljs-keyword">await</span> <span class="hljs-title class_">Promise</span>.<span class="hljs-title function_">all</span>([
+  <span class="hljs-keyword">new</span> <span class="hljs-title class_">GLTFLoader</span>().<span class="hljs-title function_">loadAsync</span>(<span class="hljs-string">&#x27;models/Fox.glb&#x27;</span>),
+  <span class="hljs-keyword">new</span> <span class="hljs-title class_">HDRLoader</span>().<span class="hljs-title function_">loadAsync</span>(<span class="hljs-string">&#x27;textures/rosendal_plains_2_1k.hdr&#x27;</span>),
+]);
+</code></pre>
+<h3>Compressed models: Draco, KTX2 and meshopt</h3>
+<p>The fox is tiny, but real models are often tens of megabytes. glTF has extensions for compressing them, and you will meet them sooner or later, usually as a console error like <em>&quot;No DRACOLoader instance provided&quot;</em> or <em>&quot;setMeshoptDecoder must be called before loading compressed files&quot;</em>. Each one needs a decoder that you hand to the loader once:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">DRACOLoader</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/loaders/DRACOLoader.js&#x27;</span>;
+<span class="hljs-keyword">import</span> { <span class="hljs-title class_">KTX2Loader</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/loaders/KTX2Loader.js&#x27;</span>;
+<span class="hljs-keyword">import</span> { <span class="hljs-title class_">MeshoptDecoder</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/libs/meshopt_decoder.module.js&#x27;</span>;
+
+<span class="hljs-keyword">const</span> <span class="hljs-variable constant_">CDN</span> = <span class="hljs-string">&#x27;https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/libs/&#x27;</span>;
+
+<span class="hljs-comment">// Draco: compressed geometry (KHR_draco_mesh_compression). Decoded in a Web Worker with WASM.</span>
+<span class="hljs-keyword">const</span> draco = <span class="hljs-keyword">new</span> <span class="hljs-title class_">DRACOLoader</span>().<span class="hljs-title function_">setDecoderPath</span>(<span class="hljs-string">`<span class="hljs-subst">${CDN}</span>draco/gltf/`</span>);
+
+<span class="hljs-comment">// KTX2 / Basis Universal: textures that stay compressed on the GPU (KHR_texture_basisu).</span>
+<span class="hljs-comment">// detectSupport asks the renderer which GPU formats this device understands.</span>
+<span class="hljs-keyword">const</span> ktx2 = <span class="hljs-keyword">new</span> <span class="hljs-title class_">KTX2Loader</span>().<span class="hljs-title function_">setTranscoderPath</span>(<span class="hljs-string">`<span class="hljs-subst">${CDN}</span>basis/`</span>).<span class="hljs-title function_">detectSupport</span>(renderer);
+
+<span class="hljs-keyword">const</span> loader = <span class="hljs-keyword">new</span> <span class="hljs-title class_">GLTFLoader</span>()
+  .<span class="hljs-title function_">setDRACOLoader</span>(draco)
+  .<span class="hljs-title function_">setKTX2Loader</span>(ktx2)
+  .<span class="hljs-title function_">setMeshoptDecoder</span>(<span class="hljs-title class_">MeshoptDecoder</span>);   <span class="hljs-comment">// meshopt: geometry and animation (EXT_meshopt_compression)</span>
+</code></pre>
+<p>In short: <strong>Draco</strong> makes geometry downloads much smaller, but decoding costs CPU time. <strong>Meshopt</strong> compresses a little less but decodes very fast, and it also handles animation data. <strong>KTX2</strong> is about textures: a JPEG or PNG is small to download but gets unpacked to full size in GPU memory, while a KTX2 texture stays compressed there too. You do not create these files by hand. A command-line tool such as <a href="https://gltf-transform.dev/" target="_blank" rel="noopener">glTF Transform</a> converts an ordinary <code>.glb</code>:</p>
+<pre class="hljs"><code class="language-bash">npx @gltf-transform/cli optimize model.glb model-small.glb --compress meshopt --texture-compress ktx2
+</code></pre>
+<p>You can keep the decoder setup in your project even for files that do not need it. The loader only fetches a decoder when a file actually uses that extension.</p>
+<h2>Walking the scene graph</h2>
+<p>A loaded model is an ordinary Three.js scene graph, so everything from Part 1 applies. Let's print it. This little recursive function logs every node with its type and name, indented by depth:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">function</span> <span class="hljs-title function_">printTree</span>(<span class="hljs-params">object, depth = <span class="hljs-number">0</span></span>) {
+  <span class="hljs-variable language_">console</span>.<span class="hljs-title function_">log</span>(<span class="hljs-string">`<span class="hljs-subst">${<span class="hljs-string">&#x27;  &#x27;</span>.repeat(depth)}</span><span class="hljs-subst">${object.type}</span> &quot;<span class="hljs-subst">${object.name}</span>&quot;`</span>);
+  <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> child <span class="hljs-keyword">of</span> object.<span class="hljs-property">children</span>) <span class="hljs-title function_">printTree</span>(child, depth + <span class="hljs-number">1</span>);
+}
+<span class="hljs-title function_">printTree</span>(gltf.<span class="hljs-property">scene</span>);
+</code></pre>
+<p>For the fox, it prints this (shortened):</p>
+<pre class="hljs"><code class="language-text">Group &quot;&quot;
+  Object3D &quot;root&quot;
+    Bone &quot;_rootJoint&quot;
+      Bone &quot;b_Root_00&quot;
+        Bone &quot;b_Hip_01&quot;
+          Bone &quot;b_Spine01_02&quot;
+            Bone &quot;b_Spine02_03&quot;
+              Bone &quot;b_Neck_04&quot;
+                Bone &quot;b_Head_05&quot;
+          Bone &quot;b_Tail01_012&quot;
+          ...
+  SkinnedMesh &quot;fox&quot;
+</code></pre>
+<p>So the &quot;model&quot; is a group with a tree of <code>Bone</code>s (the skeleton) and one <code>SkinnedMesh</code>, a mesh whose vertices follow those bones. The names come from the file, which is why it is worth asking whoever made the model to name things sensibly.</p>
+<p>Most of the time you do not want to print the tree, you want to change something on every mesh in it. <code>traverse</code> visits the object and all its descendants, depth first:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">let</span> meshes = <span class="hljs-number">0</span>;
+<span class="hljs-keyword">let</span> bones = <span class="hljs-number">0</span>;
+model.<span class="hljs-title function_">traverse</span>(<span class="hljs-function">(<span class="hljs-params">child</span>) =&gt;</span> {
+  <span class="hljs-keyword">if</span> (child.<span class="hljs-property">isMesh</span>) meshes++;     <span class="hljs-comment">// true for Mesh and SkinnedMesh</span>
+  <span class="hljs-keyword">if</span> (child.<span class="hljs-property">isBone</span>) bones++;
+});
+</code></pre>
+<p>Every Three.js class sets a flag like this (<code>isMesh</code>, <code>isSkinnedMesh</code>, <code>isBone</code>, <code>isLight</code>...), and checking the flag is the usual way to filter during a traversal. We will use exactly this pattern to switch on shadows later. To grab one node by name, there is <code>model.getObjectByName('b_Head_05')</code>, which is handy when you want to attach a hat to a head bone.</p>
+<blockquote>
+<p>One detail you can see in the screenshots: the fox looks faceted. That is on purpose. The file has no <code>normal</code> attribute, and the glTF spec says a mesh without normals should be drawn with flat normals, so <code>GLTFLoader</code> sets <code>flatShading: true</code> on its material. You met <code>flatShading</code> in Part 2.</p>
+</blockquote>
+<h2>A giant or tiny model: fitting it with Box3</h2>
+<p>Here is the first surprise. Add the fox to the scene from Part 1 as it is, and this is what you see:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-1-giant.webp" alt="Screenshot: the dark grid from Part 1, almost empty. Only the corner of a huge brown shape pokes into the top right of the frame, with a yellow box outline next to it. A panel in the corner says: Fox.glb: 1 mesh, 24 bones, 3 clips, native size 25.2 × 79.0 × 154.7, not scaled." width="960" height="600" loading="lazy">
+  <figcaption>Step 1 with <code>?fit=0</code>: the fox at its native size. The camera is standing next to one of its legs. (<a href="/3d-tutorial/demos/part-3/step-1.html?fit=0" target="_blank" rel="noopener">step-1.html?fit=0</a>)</figcaption>
+</figure>
+<p>glTF uses metres, and this fox is about 155 units long: a fox longer than a football pitch. Models come from many tools and many people, and their scale and origin are a lottery. One is in centimetres, another was modelled 300 units away from the origin, a third stands with its feet at y = 0 and a fourth is centred on its belly. So the first thing to do with any model you did not make yourself is <strong>measure it</strong>.</p>
+<p><code>Box3</code> is an axis-aligned bounding box: the smallest box, lined up with the x, y and z axes, that contains an object. <code>setFromObject</code> computes it for an object and all its children, in world units:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> box = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Box3</span>().<span class="hljs-title function_">setFromObject</span>(model);
+<span class="hljs-keyword">const</span> size = box.<span class="hljs-title function_">getSize</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>());   <span class="hljs-comment">// 25.2 × 79.0 × 154.7 for the fox</span>
+</code></pre>
+<p>With the size, we can scale the model so its longest side has a length we choose, then move it so it is centred on the origin and stands on the floor:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">function</span> <span class="hljs-title function_">fitToSize</span>(<span class="hljs-params">object, size</span>) {
+  <span class="hljs-comment">// 1. scale so the longest side is `size` units</span>
+  <span class="hljs-keyword">const</span> box = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Box3</span>().<span class="hljs-title function_">setFromObject</span>(object);
+  <span class="hljs-keyword">const</span> dimensions = box.<span class="hljs-title function_">getSize</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>());
+  object.<span class="hljs-property">scale</span>.<span class="hljs-title function_">setScalar</span>(size / <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">max</span>(dimensions.<span class="hljs-property">x</span>, dimensions.<span class="hljs-property">y</span>, dimensions.<span class="hljs-property">z</span>));
+
+  <span class="hljs-comment">// 2. measure again (the box changed), then move the centre to x = 0, z = 0 and the bottom to y = 0</span>
+  box.<span class="hljs-title function_">setFromObject</span>(object);
+  <span class="hljs-keyword">const</span> center = box.<span class="hljs-title function_">getCenter</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>());
+  object.<span class="hljs-property">position</span>.<span class="hljs-property">x</span> -= center.<span class="hljs-property">x</span>;
+  object.<span class="hljs-property">position</span>.<span class="hljs-property">z</span> -= center.<span class="hljs-property">z</span>;
+  object.<span class="hljs-property">position</span>.<span class="hljs-property">y</span> -= box.<span class="hljs-property">min</span>.<span class="hljs-property">y</span>;
+}
+
+<span class="hljs-title function_">fitToSize</span>(model, <span class="hljs-number">2</span>);
+</code></pre>
+<p>The order matters. Scaling happens around the model's own origin, which can be anywhere, so the box has to be measured again after scaling, before we move the model. And we move it by the difference (<code>-=</code>), not by setting the position, so that any offset the model already had is kept.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-1-fitted.webp" alt="Screenshot: the same grid, now with a small orange low-poly fox standing on it near the centre, inside a thin yellow box that touches its nose, tail, back and feet. The panel says: scaled ×0.0129 to fit 2 units." width="960" height="600" loading="lazy">
+  <figcaption>Step 1: the fox scaled by 0.0129 so its longest side is 2 units, centred and standing on the grid. The yellow <code>Box3Helper</code> shows the bounding box. (<a href="/3d-tutorial/demos/part-3/step-1.html" target="_blank" rel="noopener">step-1.html</a>)</figcaption>
+</figure>
+<p>Two units is not magic; it is just the size our camera from Part 1 frames nicely. In a real project you pick the scale once (for example, &quot;one unit is one metre&quot;) and make all your models agree with it, either in the exporting tool or with code like this.</p>
+<blockquote>
+<p><code>setFromObject</code> measures the model in its <strong>current pose</strong>. For a skinned character, measure before you start an animation, or the box will change from frame to frame. By default it also uses each mesh's precomputed bounding box, which is fast but can be a little loose on rotated parts; pass <code>true</code> as a second argument (<code>setFromObject(model, true)</code>) for an exact box, at the cost of visiting every vertex.</p>
+</blockquote>
+<h2>Making it move: AnimationMixer, clips and actions</h2>
+<p>The fox file contains three animations: <code>Survey</code> (looking around), <code>Walk</code> and <code>Run</code>. They arrive in <code>gltf.animations</code> as <code>AnimationClip</code> objects. A clip is pure data: a list of <strong>keyframe tracks</strong>, each one saying &quot;this property of this bone has these values at these times&quot;, for example the rotation of <code>b_Head_05</code> over two seconds. A clip does not know which model it belongs to and does not play by itself.</p>
+<p>Three pieces play it:</p>
+<ul>
+<li>an <strong><code>AnimationMixer</code></strong> is the player for one model. It knows the model and finds the bones that the tracks name;</li>
+<li>an <strong><code>AnimationAction</code></strong> is one clip scheduled on that mixer, with its own state: playing or not, weight, speed, looping;</li>
+<li>every frame, <strong><code>mixer.update(delta)</code></strong> moves time forward by <code>delta</code> seconds and writes the new bone transforms.</li>
+</ul>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> mixer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">AnimationMixer</span>(model);
+<span class="hljs-keyword">const</span> actions = {};
+<span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> clip <span class="hljs-keyword">of</span> gltf.<span class="hljs-property">animations</span>) actions[clip.<span class="hljs-property">name</span>] = mixer.<span class="hljs-title function_">clipAction</span>(clip);
+
+<span class="hljs-keyword">let</span> current = actions.<span class="hljs-property">Walk</span>;
+current.<span class="hljs-title function_">play</span>();
+</code></pre>
+<p>Switching clips by just stopping one and playing another makes the fox snap from one pose to the next. Real games blend between them. An action can fade into another over some time:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">function</span> <span class="hljs-title function_">play</span>(<span class="hljs-params">name</span>) {
+  <span class="hljs-keyword">const</span> next = actions[name];
+  <span class="hljs-keyword">if</span> (next === current) <span class="hljs-keyword">return</span>;
+  next.<span class="hljs-title function_">reset</span>().<span class="hljs-title function_">play</span>();               <span class="hljs-comment">// start the new clip from frame 0...</span>
+  current.<span class="hljs-title function_">crossFadeTo</span>(next, <span class="hljs-number">0.4</span>);    <span class="hljs-comment">// ...and blend into it over 0.4 seconds</span>
+  current = next;
+}
+</code></pre>
+<p><code>mixer.timeScale</code> speeds up or slows down everything on the mixer (<code>0</code> freezes it), and each action also has its own <code>timeScale</code>, <code>weight</code> and <code>loop</code> (<code>THREE.LoopRepeat</code> by default, or <code>LoopOnce</code> with <code>clampWhenFinished = true</code> for something like a jump that should stop on its last frame).</p>
+<p>To see what the animation is actually moving, add a <code>SkeletonHelper</code>. It draws each bone as a line:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> skeleton = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">SkeletonHelper</span>(model);
+scene.<span class="hljs-title function_">add</span>(skeleton);
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-2-skeleton.webp" alt="Screenshot: the low-poly fox mid-stride in its Run animation, with thin green and blue lines inside its body running from the hips along the spine to the head, down each leg and out along the tail. A panel shows clip: Run, speed: 1 and a ticked skeleton box." width="960" height="600" loading="lazy">
+  <figcaption>Step 2: the fox running, with <code>SkeletonHelper</code> drawing its 24 bones. Switch clips in the panel to see the cross-fade. (<a href="/3d-tutorial/demos/part-3/step-2.html?clip=Run&amp;skeleton=1" target="_blank" rel="noopener">step-2.html</a>)</figcaption>
+</figure>
+<h3>Where delta comes from: Clock vs Timer</h3>
+<p><code>mixer.update</code> needs the time since the last frame, in seconds. Not a fixed <code>1 / 60</code>: screens run at 60, 120 or 144 Hz, and frames get dropped, so an animation driven by a frame counter plays at different speeds on different machines.</p>
+<p>Almost every older tutorial uses <code>THREE.Clock</code> for this:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-comment">// The old way. Clock is deprecated since r183 and logs a warning in r186.</span>
+<span class="hljs-keyword">const</span> clock = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Clock</span>();
+renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">() =&gt;</span> {
+  mixer.<span class="hljs-title function_">update</span>(clock.<span class="hljs-title function_">getDelta</span>());
+  renderer.<span class="hljs-title function_">render</span>(scene, camera);
+});
+</code></pre>
+<p><code>Clock</code> has a well-known trap: <code>getDelta()</code> measures &quot;time since the last call to <code>getDelta()</code>&quot;, and <code>getElapsedTime()</code> secretly calls it too. Use both in the same frame and one of them gets a delta of almost zero. The replacement, <code>THREE.Timer</code>, separates &quot;advance the clock&quot; from &quot;read the clock&quot;. You call <code>update()</code> once at the start of each frame, and after that <code>getDelta()</code> and <code>getElapsed()</code> return the same values no matter how often or in what order you call them:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> timer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Timer</span>();
+
+renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">time</span>) =&gt;</span> {
+  timer.<span class="hljs-title function_">update</span>(time);              <span class="hljs-comment">// once per frame, with the timestamp setAnimationLoop gives us</span>
+  mixer.<span class="hljs-title function_">update</span>(timer.<span class="hljs-title function_">getDelta</span>());  <span class="hljs-comment">// seconds since the previous frame</span>
+  controls.<span class="hljs-title function_">update</span>();
+  renderer.<span class="hljs-title function_">render</span>(scene, camera);
+});
+</code></pre>
+<p>This is what all the demos in this series use. <code>Timer</code> can also ignore the time a tab spends in the background: call <code>timer.connect(document)</code>, and when you come back after ten minutes the fox does not try to catch up on ten minutes of walking in one frame.</p>
+<h2>Lighting from the world: environment maps</h2>
+<p>Our fox is lit by the two lights from Part 1: an <code>AmbientLight</code> and a <code>DirectionalLight</code>. That works, but it looks like a fox in a dark studio. Real objects are lit by everything around them: the sky, the ground, the walls. Physically based materials are built to use that kind of light, and without it they fall apart. Here is step 3 with no lights and no environment at all:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-3-no-environment.webp" alt="Screenshot: a dark blue-grey background with three pure black silhouettes: a ball on the left, the fox in the middle and another ball on the right. A panel shows environment: none." width="960" height="600" loading="lazy">
+  <figcaption>Step 3 with no environment: a chrome ball, the fox and a white matte ball, all black. No light in, no light out. (<a href="/3d-tutorial/demos/part-3/step-3.html?env=none" target="_blank" rel="noopener">step-3.html?env=none</a>)</figcaption>
+</figure>
+<p><strong>Image-based lighting</strong> (IBL) solves this by using an image of the surroundings as a light source. Every direction around the object gets the colour and brightness of the image in that direction. A shiny surface reflects one sharp direction; a rough surface averages a wide cone of directions. Computing that cone for every pixel would be far too slow, so Three.js prepares the image once with <strong><code>PMREMGenerator</code></strong> (pre-filtered, mipmapped radiance environment map): it stores the environment several times, blurred more and more, and a material picks the level that matches its roughness.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-3/ibl.svg" alt="Diagram: an HDR panorama of sky and ground, or a RoomEnvironment, goes into PMREMGenerator, which pre-blurs it once into three levels for roughness 0, 0.5 and 1, from sharp to very blurred. A chrome sphere reads the sharp level, a matte sphere reads the blurry one. Below, two boxes: scene.environment = texture lights MeshStandardMaterial and MeshPhysicalMaterial and is invisible on its own; scene.background = texture only paints behind everything, and backgroundBlurriness picks a blurrier level. A footer notes that the environment never casts shadows, so add a DirectionalLight that matches the sun." width="880" height="440" loading="lazy">
+  <figcaption>Image-based lighting: one environment, pre-blurred once by <code>PMREMGenerator</code>, gives every roughness the reflection it needs. Lighting and background are two separate switches.</figcaption>
+</figure>
+<h3>RoomEnvironment: a studio in three lines</h3>
+<p>You saw this in Part 2. <code>RoomEnvironment</code> is a small virtual room with a few bright panels, built from boxes in code, so there is nothing to download. <code>PMREMGenerator</code> renders it and pre-filters it:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">RoomEnvironment</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/environments/RoomEnvironment.js&#x27;</span>;
+
+<span class="hljs-keyword">const</span> pmrem = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PMREMGenerator</span>(renderer);
+scene.<span class="hljs-property">environment</span> = pmrem.<span class="hljs-title function_">fromScene</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">RoomEnvironment</span>(), <span class="hljs-number">0.04</span>).<span class="hljs-property">texture</span>;
+</code></pre>
+<p>The second argument of <code>fromScene</code> (<code>0.04</code>) blurs the room slightly, so the panels have no hard edges. <code>scene.environment</code> is the important line: every <code>MeshStandardMaterial</code> and <code>MeshPhysicalMaterial</code> in the scene now uses this texture for its ambient light and reflections. (You can override it per material with <code>material.envMap</code>.)</p>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-3-room-environment.webp" alt="Screenshot: the same three objects on a dark background, now lit. The chrome ball on the left reflects a soft grey room with bright patches, the fox shows its orange, white and brown faces, and the white ball on the right is so bright it is almost a flat white disc." width="960" height="600" loading="lazy">
+  <figcaption>Step 3 with <code>RoomEnvironment</code>: no lights in the scene, yet everything is lit. The white ball is clipping to pure white; we fix that with tone mapping below. (<a href="/3d-tutorial/demos/part-3/step-3.html?env=room" target="_blank" rel="noopener">step-3.html?env=room</a>)</figcaption>
+</figure>
+<h3>A real sky: loading an HDR with HDRLoader</h3>
+<p>A room is neutral and predictable, which is great for product shots. For an outdoor look, use a photo of a real place. Not a JPEG, though: a JPEG stores each channel as 0 to 255, so the sun and a white cloud end up with the same value. Lighting needs the real difference, and the sun can be thousands of times brighter. <strong>HDR</strong> (high dynamic range) images store floating-point values that can go far above 1. The classic format is Radiance <code>.hdr</code>; the newer <code>.exr</code> works too (with <code>EXRLoader</code>).</p>
+<p>We use <a href="https://polyhaven.com/a/rosendal_plains_2" target="_blank" rel="noopener">Rosendal Plains 2</a> from Poly Haven, a free (CC0) panorama of grassland under a cloudy sky. HDR panoramas are <strong>equirectangular</strong>: the full sphere around the camera unwrapped into a 2:1 rectangle, like a world map. Three.js needs to be told that:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">HDRLoader</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/loaders/HDRLoader.js&#x27;</span>;
+
+<span class="hljs-keyword">const</span> hdrTexture = <span class="hljs-keyword">await</span> <span class="hljs-keyword">new</span> <span class="hljs-title class_">HDRLoader</span>().<span class="hljs-title function_">loadAsync</span>(<span class="hljs-string">&#x27;textures/rosendal_plains_2_1k.hdr&#x27;</span>);
+hdrTexture.<span class="hljs-property">mapping</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">EquirectangularReflectionMapping</span>;
+
+scene.<span class="hljs-property">environment</span> = hdrTexture;   <span class="hljs-comment">// light the materials with it</span>
+scene.<span class="hljs-property">background</span> = hdrTexture;    <span class="hljs-comment">// and show it behind everything</span>
+</code></pre>
+<p>There is no <code>PMREMGenerator</code> call here. When you assign an equirectangular texture to <code>scene.environment</code>, the renderer runs it through PMREM for you, once, and caches the result.</p>
+<blockquote>
+<p>In older code this loader is called <code>RGBELoader</code>. It was renamed to <code>HDRLoader</code> (same file format, same usage), and the old name is deprecated.</p>
+</blockquote>
+<p>For lighting, a <strong>1k</strong> HDR (1024 × 512, about 1.6 MB here) is plenty, because PMREM blurs it anyway. A 4k or 8k version only matters when you show it sharp as a background, and it costs a much bigger download and more GPU memory.</p>
+<h3>environment vs background</h3>
+<p>These two properties are completely independent, and mixing them up is a common source of confusion:</p>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>What it does</th>
+<th>Visible?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scene.environment</code></td>
+<td>Lights and reflects in PBR materials</td>
+<td>No, only through its effect on materials</td>
+</tr>
+<tr>
+<td><code>scene.background</code></td>
+<td>Paints the screen behind everything (a <code>Color</code>, a texture or an HDR)</td>
+<td>Yes, but lights nothing</td>
+</tr>
+<tr>
+<td><code>scene.backgroundBlurriness</code></td>
+<td>0 to 1: how blurred an HDR background is</td>
+<td></td>
+</tr>
+<tr>
+<td><code>scene.environmentIntensity</code>, <code>scene.backgroundIntensity</code></td>
+<td>Brightness multipliers for each</td>
+<td></td>
+</tr>
+<tr>
+<td><code>scene.environmentRotation</code>, <code>scene.backgroundRotation</code></td>
+<td>Turn the environment (an <code>Euler</code>), for example to move the sun</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>You can light with an HDR and keep a plain colour background, which is very common for product viewers, or show an HDR behind a scene that is lit some other way.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-3-hdr-background.webp" alt="Screenshot: the fox and the two balls standing in a sharp photo of dry grassland with low hills and white clouds in a blue sky. The chrome ball reflects the sky and grass, and the white ball is soft white with a slightly brighter top." width="960" height="600" loading="lazy">
+  <figcaption>Step 3 with the HDR as environment and background. The chrome ball is a small mirror of the photo. (<a href="/3d-tutorial/demos/part-3/step-3.html?env=hdr&amp;bg=1" target="_blank" rel="noopener">step-3.html?env=hdr&amp;bg=1</a>)</figcaption>
+</figure>
+<p>A sharp photo behind a low-poly fox looks a little like a sticker on a postcard: the eye notices that the photo has far more detail than the model. Blurring the background fixes that, and it also hides the low resolution of a 1k HDR:</p>
+<pre class="hljs"><code class="language-js">scene.<span class="hljs-property">backgroundBlurriness</span> = <span class="hljs-number">0.3</span>;
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-3-hdr-blurred.webp" alt="Screenshot: the same scene, but the background is now a soft blur of beige ground and pale blue-grey sky with no visible detail. The fox and the balls are still sharp and lit the same way." width="960" height="600" loading="lazy">
+  <figcaption>Step 3 with <code>backgroundBlurriness</code> at 0.3. Only the background changed; the lighting is identical. (<a href="/3d-tutorial/demos/part-3/step-3.html?env=hdr&amp;bg=1&amp;blur=0.3" target="_blank" rel="noopener">step-3.html?env=hdr&amp;bg=1&amp;blur=0.3</a>)</figcaption>
+</figure>
+<p>When you are done with a <code>PMREMGenerator</code>, call <code>pmrem.dispose()</code> to free its internal buffers. The textures it already produced keep working. And if you swap environments at runtime, call <code>.dispose()</code> on the old texture too, or it stays in GPU memory.</p>
+<h2>Tone mapping and exposure</h2>
+<p>Remember the white ball that turned into a flat disc? With HDR lighting, the light hitting a surface can easily add up to more than 1.0. A screen cannot show more than 1.0, so everything above it is cut off (clipped) to the same white, and all the shading in the bright parts is lost. Saturated colours suffer too: an orange that is too bright in the red channel turns yellow, then white.</p>
+<p><strong>Tone mapping</strong> solves this the way a camera does: it squeezes a wide range of brightness into the 0 to 1 the screen can show, with a curve that keeps detail in the highlights instead of cutting it off. Three.js applies it at the very end of each material's shader, and it is off by default:</p>
+<pre class="hljs"><code class="language-js">renderer.<span class="hljs-property">toneMapping</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">ACESFilmicToneMapping</span>;
+renderer.<span class="hljs-property">toneMappingExposure</span> = <span class="hljs-number">1</span>;
+</code></pre>
+<p>Step 4 renders the same view four times, one tone mapper in each quarter of the canvas (with <code>setViewport</code> and <code>setScissor</code>), so you can compare them directly:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-4-tone-mapping.webp" alt="Screenshot in four quarters, each showing the fox between a white ball and an orange ball in front of a blurred grassland. No: the white ball is flat white and the orange ball is bright and slightly flat. ACESFilmic: more contrast, the white ball has visible shading and the orange is deep. AgX: softer and lower contrast, the orange looks a bit pastel and the white ball is light grey. Neutral: colours close to the original, with soft highlights." width="960" height="600" loading="lazy">
+  <figcaption>Step 4: the same scene with no tone mapping, ACES Filmic, AgX and Neutral. Drag the exposure slider and watch how differently each handles bright light. (<a href="/3d-tutorial/demos/part-3/step-4.html" target="_blank" rel="noopener">step-4.html</a>)</figcaption>
+</figure>
+<p>The options worth knowing:</p>
+<ul>
+<li><strong><code>NoToneMapping</code></strong> (the default): values above 1 clip. Fine for flat, unlit or UI-like scenes; wrong for HDR lighting.</li>
+<li><strong><code>ACESFilmicToneMapping</code></strong>: the film-industry curve, and the one most tutorials use. Punchy contrast and rich colours. It does shift very bright saturated colours (bright orange drifts towards yellow).</li>
+<li><strong><code>AgXToneMapping</code></strong>: newer, and Blender's default since version 4. It keeps hues more stable in very bright light, at the cost of a flatter, more &quot;photographic&quot; look. A good default if your scene has strong coloured lights.</li>
+<li><strong><code>NeutralToneMapping</code></strong> (Khronos PBR Neutral): designed for product visualisation. Colours in the normal range stay almost exactly as the artist set them; only the highlights get compressed. Pick this when the red of a sneaker must match the brand red.</li>
+</ul>
+<p><code>toneMappingExposure</code> works like the exposure on a camera: it multiplies the light before the curve. If a scene looks too dark with tone mapping on (it often looks a little darker than without), raise exposure rather than making every light brighter.</p>
+<blockquote>
+<p>Tone mapping applies when you render to the screen, and only to materials with <code>toneMapped: true</code> (the default). Set <code>toneMapped: false</code> on things that should keep their exact colour, such as a UI overlay drawn in 3D. When you add post-processing later, tone mapping moves to an output pass at the end of the chain; we will get there in a later part.</p>
+</blockquote>
+<h2>Shadows</h2>
+<p>Environment light has no direction, so it cannot cast a shadow, and the fox floats. In Three.js, only three lights can cast shadows: <code>DirectionalLight</code>, <code>SpotLight</code> and <code>PointLight</code>. They all use the same technique, the <strong>shadow map</strong>.</p>
+<h3>How a shadow map works</h3>
+<p>A GPU draws triangles; it has no idea whether a point is hidden from a light. So the shadow is computed with two passes:</p>
+<ol>
+<li><strong>From the light.</strong> Before the normal render, the scene is rendered from the light's point of view, by a camera attached to the light (the <strong>shadow camera</strong>). This pass does not store colours, only <strong>depth</strong>: for each texel, how far from the light the first surface is. The result is the shadow map, a depth texture.</li>
+<li><strong>From the camera.</strong> During the normal render, for each pixel, the shader works out where that point would be in the shadow map and how far it is from the light. If it is <strong>farther</strong> than the depth stored there, something else was in front of it: the point is in shadow.</li>
+</ol>
+<figure>
+  <img src="/3d-tutorial/images/part-3/shadow-map.svg" alt="Diagram in three parts. Left, a side view: a sun at the top left, a dashed orthographic shadow camera box under it, and a box standing on the ground. A ray from the sun hits the top of the box first, at depth 0.42, and continues to point P on the ground behind the box. Another ray reaches point Q on the open ground. Middle, pass 1: the shadow map as a grid of depth values, dark where surfaces are near the light. Right, pass 2: P is at 0.61, which is more than the stored 0.42, so P is in shadow; Q is at 0.70, equal to the stored 0.70, so Q is lit." width="880" height="440" loading="lazy">
+  <figcaption>Two passes: first the light records the nearest depth in every direction, then each pixel compares its own depth with that record.</figcaption>
+</figure>
+<p>Everything else in this section follows from these two passes: the shadow camera decides what can have a shadow, the texture size decides how sharp it is, and comparing two depths that are almost equal is where the artefacts come from.</p>
+<h3>Turning shadows on: four switches</h3>
+<p>Shadows are off by default, because the extra pass costs time. You need <strong>all four</strong> of these, and forgetting one of them is the number one reason a shadow does not appear:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-comment">// 1. the renderer must allow shadows</span>
+renderer.<span class="hljs-property">shadowMap</span>.<span class="hljs-property">enabled</span> = <span class="hljs-literal">true</span>;
+
+<span class="hljs-comment">// 2. the light must cast them</span>
+sun.<span class="hljs-property">castShadow</span> = <span class="hljs-literal">true</span>;
+
+<span class="hljs-comment">// 3. objects that block light cast...</span>
+model.<span class="hljs-title function_">traverse</span>(<span class="hljs-function">(<span class="hljs-params">child</span>) =&gt;</span> {
+  <span class="hljs-keyword">if</span> (child.<span class="hljs-property">isMesh</span>) child.<span class="hljs-property">castShadow</span> = <span class="hljs-literal">true</span>;   <span class="hljs-comment">// on the meshes, not on the Group!</span>
+});
+
+<span class="hljs-comment">// 4. ...and surfaces that show the shadow receive</span>
+floor.<span class="hljs-property">receiveShadow</span> = <span class="hljs-literal">true</span>;
+</code></pre>
+<p>Point 3 deserves a second look. <code>castShadow</code> and <code>receiveShadow</code> exist on every <code>Object3D</code>, so <code>gltf.scene.castShadow = true</code> runs without an error. It just does nothing, because only meshes are drawn. The flags are not inherited by children, so you have to <code>traverse</code>. An object can do both: set <code>receiveShadow</code> on the fox too, and its ears can shadow its back.</p>
+<p>There are three shadow map types, set with <code>renderer.shadowMap.type</code>:</p>
+<ul>
+<li><strong><code>PCFShadowMap</code></strong> (the default): samples the shadow map several times around each point (percentage-closer filtering) and averages, which gives smooth edges. <code>light.shadow.radius</code> controls how soft they are.</li>
+<li><strong><code>BasicShadowMap</code></strong>: one sample, hard and pixelated edges. The fastest.</li>
+<li><strong><code>VSMShadowMap</code></strong>: variance shadow maps. Can blur into very soft shadows (<code>shadow.radius</code> and <code>shadow.blurSamples</code>), but can show &quot;light bleeding&quot; where shadows overlap.</li>
+</ul>
+<blockquote>
+<p>Many tutorials use <code>PCFSoftShadowMap</code>. It has been removed; in r186 asking for it logs a warning and gives you <code>PCFShadowMap</code>. Use <code>PCFShadowMap</code> with a <code>shadow.radius</code> of 2 to 4 instead.</p>
+</blockquote>
+<h3>Fitting the shadow camera</h3>
+<p>For a <code>DirectionalLight</code>, the shadow camera is an <code>OrthographicCamera</code>: a box. It starts at the light's position and looks at <code>light.target</code> (the origin by default). Only things inside that box can cast or receive shadows. By default the box is 10 × 10 units wide (from −5 to 5) and goes from 0.5 to 500 units deep, and the shadow map is 512 × 512 texels.</p>
+<p>The trouble is that those 512 texels are spread across the whole box. If the box is 10 units wide and your character is 2, the character only covers a fifth of the shadow map: about 100 texels from nose to tail. That is why default shadows look blurry and blocky. The fix is to make the box as small as you can while still covering everything that needs a shadow:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> sun = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">DirectionalLight</span>(<span class="hljs-number">0xffffff</span>, <span class="hljs-number">2.2</span>);
+sun.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">3</span>, <span class="hljs-number">5</span>, <span class="hljs-number">2</span>);
+sun.<span class="hljs-property">castShadow</span> = <span class="hljs-literal">true</span>;
+
+<span class="hljs-comment">// The box, in the light&#x27;s own space: x and y across, near and far along its direction</span>
+sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>.<span class="hljs-property">left</span> = -<span class="hljs-number">1.6</span>;
+sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>.<span class="hljs-property">right</span> = <span class="hljs-number">1.6</span>;
+sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>.<span class="hljs-property">top</span> = <span class="hljs-number">1.6</span>;
+sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>.<span class="hljs-property">bottom</span> = -<span class="hljs-number">1.6</span>;
+sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>.<span class="hljs-property">near</span> = <span class="hljs-number">3</span>;
+sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>.<span class="hljs-property">far</span> = <span class="hljs-number">9</span>;
+
+sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">mapSize</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">1024</span>, <span class="hljs-number">1024</span>);   <span class="hljs-comment">// the shadow texture, in texels</span>
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-3/shadow-camera.svg" alt="Diagram: two top-down views of the fox inside a shadow camera box. Left, the default: a 10-unit box from −5 to 5 with a 512 shadow map, drawn as a coarse grid with a small fox in the middle; 10 units over 512 texels is about 0.0195 units per texel, and the 2-unit fox gets about 100 texels. Right, fitted: a box from −1.6 to 1.6 with a 1024 map, a fine grid with the fox filling most of it; about 0.0031 units per texel and 640 texels across the fox, six times sharper. A note says CameraHelper(sun.shadow.camera) draws this box." width="880" height="480" loading="lazy">
+  <figcaption>The same shadow map spread over a smaller box gives more texels to the thing you care about. Fitting the box matters more than raising <code>mapSize</code>.</figcaption>
+</figure>
+<p>Guessing those six numbers is hard, so draw the box. <code>CameraHelper</code> works with any camera, including a shadow camera:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> helper = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">CameraHelper</span>(sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>);
+scene.<span class="hljs-title function_">add</span>(helper);
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-5-shadow-camera.webp" alt="Screenshot: a grey floor with the small fox standing on it and casting a dark shadow. Above it, yellow and red lines draw a tall rectangular box tilted towards the top right, where the sun is. A white line runs from the box towards the fox. A panel on the right shows castShadow, CameraHelper, mapSize 1024, type PCFShadowMap and shadow.radius." width="960" height="600" loading="lazy">
+  <figcaption>Step 5: the <code>CameraHelper</code> draws the shadow camera's box. Everything that should cast or catch a shadow must be inside it. (<a href="/3d-tutorial/demos/part-3/step-5.html" target="_blank" rel="noopener">step-5.html</a>)</figcaption>
+</figure>
+<p>Here is the difference up close. Same scene, same light; only the box and the map size changed:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-5-fit-compare.webp" alt="Screenshot in two halves, a close-up of the fox from above with its shadow on a grey floor. Left, labelled default: 10 × 10 units, 512 px: the shadow is a soft, blobby shape with ragged, stair-stepped edges. Right, labelled fitted: 3.2 × 3.2 units, 1024 px: the shadow is crisp, and the ears, legs and tail are clearly separate." width="960" height="600" loading="lazy">
+  <figcaption>Left: the default shadow camera (<a href="/3d-tutorial/demos/part-3/step-5.html?fit=0" target="_blank" rel="noopener">step-5.html?fit=0</a>). Right: fitted to the fox with a 1024 map. About six times more texels across the fox.</figcaption>
+</figure>
+<p>A few practical notes:</p>
+<ul>
+<li><strong>Near and far are distances from the light's position</strong>, along its direction. Our sun is at (3, 5, 2), about 6.2 units from the fox, so 3 to 9 covers the fox with room to spare. Keeping this range tight also helps with bias, as we will see.</li>
+<li><strong>The light's position only sets the direction and the start of the box</strong>, not the brightness: a directional light is equally bright everywhere. If the thing you want to shadow moves, move <code>sun.target</code> with it (and add <code>sun.target</code> to the scene so its matrix updates), and the box follows.</li>
+<li><strong><code>mapSize</code> should be a power of two</strong>: 512, 1024, 2048, 4096. Each doubling is four times the texels to render every frame. 2048 is a good ceiling for most scenes; on mobile, stay at 1024 if you can.</li>
+<li>If you change <code>mapSize</code> after the first frame, the old texture keeps its old size. Throw it away and Three.js creates a new one: <code>sun.shadow.map?.dispose(); sun.shadow.map = null;</code></li>
+<li>For a scene where nothing moves, render the shadow once and keep it: <code>renderer.shadowMap.autoUpdate = false</code>, then set <code>renderer.shadowMap.needsUpdate = true</code> whenever something changes.</li>
+</ul>
+<p><code>SpotLight</code> uses a perspective shadow camera, set by the light's angle and distance. <code>PointLight</code> needs six of them (one per side of a cube), so its shadows cost six extra passes: use them sparingly.</p>
+<h3>Shadow acne and peter-panning: bias and normalBias</h3>
+<p>Turn on shadows in a scene with a low sun and you may see this:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-6-acne.webp" alt="Screenshot: a purple cube, a teal torus knot and a yellow ball on a grey floor, lit by a low sun. The floor and the cube are covered in fine diagonal stripes and moiré patterns, like a badly scanned photo, even in places that should be evenly lit." width="960" height="600" loading="lazy">
+  <figcaption>Step 6 with <code>bias</code> and <code>normalBias</code> at 0: shadow acne. The stripes are surfaces shadowing themselves. (<a href="/3d-tutorial/demos/part-3/step-6.html?bias=0&amp;normalBias=0" target="_blank" rel="noopener">step-6.html?bias=0&amp;normalBias=0</a>)</figcaption>
+</figure>
+<p>That is <strong>shadow acne</strong>, and it comes straight from pass 2. A texel of the shadow map covers a small patch of the floor, but it stores only one depth: the depth at its centre. Where the light hits the floor at an angle, half of the patch is a little closer to the light than that stored value and half is a little farther. The farther half fails the &quot;am I behind the stored depth?&quot; test against its own surface and shadows itself. Repeat that for every texel, and you get stripes.</p>
+<p>The fix is to cheat a little in the comparison:</p>
+<ul>
+<li><strong><code>shadow.bias</code></strong> shifts the depth used in the comparison. A small <strong>negative</strong> value moves the surface slightly towards the light, so it no longer loses against itself. It is measured in shadow-map depth, from 0 at <code>near</code> to 1 at <code>far</code>, so the same value means more world distance when the near-far range is large. Typical values: <code>-0.0001</code> to <code>-0.001</code>.</li>
+<li><strong><code>shadow.normalBias</code></strong> moves the point where the shadow map is read along the surface's normal, in world units. This helps most on surfaces the light grazes at a steep angle, which is exactly where plain bias struggles. Typical values: <code>0.01</code> to <code>0.05</code> for a scene measured in metres, scaled with your scene size.</li>
+</ul>
+<p>Push either one too far and you get the opposite artefact. The shadow slides away from the object that casts it, and the object seems to float above the ground. This is called <strong>peter-panning</strong>, after the boy whose shadow came loose.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-3/shadow-bias.svg" alt="Diagram in three panels. No bias, shadow acne: the shadow map stores depth in steps, like a staircase over a sloped surface, and the surface alternates between red (shadowed) and green (lit) stripes where it pokes through the steps. Small bias, clean: the steps are pushed just past the surface and all of it is lit. Too much bias, peter-panning: a box on the ground with slanted light rays, and its shadow starts a visible gap away from the bottom of the box. The footer reads: start with shadow.bias = 0 and normalBias = 0, add a little until the stripes go, then stop." width="880" height="430" loading="lazy">
+  <figcaption>Acne comes from comparing a surface with a blocky copy of itself. Bias pushes the two apart; too much bias detaches the shadow.</figcaption>
+</figure>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-6-bias-compare.webp" alt="Screenshot in two halves, a close-up of the purple cube on the floor with the teal knot above it. Left, labelled bias -0.02: peter-panning: the floor is clean, but there is a lit gap between the bottom of the cube and its shadow, so the cube seems to hover. Right, labelled bias -0.0005, normalBias 0.02: clean surfaces and the shadow touches the base of the cube." width="960" height="600" loading="lazy">
+  <figcaption>Left: far too much bias, and the cube's shadow comes loose. Right: a tiny bias plus a little <code>normalBias</code>, clean and attached. (<a href="/3d-tutorial/demos/part-3/step-6.html" target="_blank" rel="noopener">step-6.html</a>)</figcaption>
+</figure>
+<p>The recipe that works almost every time:</p>
+<ol>
+<li>Fit the shadow camera first, including near and far. A tighter box means smaller texels, and smaller texels need less bias.</li>
+<li>Start with <code>bias = 0</code> and <code>normalBias = 0</code>. Raise <code>normalBias</code> in small steps until the stripes on sloped surfaces go.</li>
+<li>If some acne is left on surfaces facing the light, add a tiny negative <code>bias</code>. Then stop, and check the contact points (feet, the bottom of boxes) for gaps.</li>
+</ol>
+<blockquote>
+<p>Why does step 6 look worse than most scenes? For a normal (<code>FrontSide</code>) material, Three.js draws the <strong>back faces</strong> into the shadow map. On a closed mesh like a cube, the stored depth is then the far side of the object, nowhere near the lit surface, so acne mostly happens on the dark side, where it is hidden. Step 6 sets <code>shadowSide: THREE.FrontSide</code> on purpose to make the problem easy to see. You get the same thing for real with double-sided materials (<code>side: THREE.DoubleSide</code>), which many glTF models use for leaves, hair and cloth. Try <code>?side=back</code> to see the default.</p>
+</blockquote>
+<h3>A ground that only shows shadows: ShadowMaterial</h3>
+<p>In the final demo, the fox walks over the HDR background with no visible floor, only a shadow. That is <code>ShadowMaterial</code>: a material that is fully transparent except where a shadow falls on it.</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> ground = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(
+  <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PlaneGeometry</span>(<span class="hljs-number">12</span>, <span class="hljs-number">12</span>),
+  <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">ShadowMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0x000000</span>, <span class="hljs-attr">opacity</span>: <span class="hljs-number">0.4</span> })
+);
+ground.<span class="hljs-property">rotation</span>.<span class="hljs-property">x</span> = -<span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> / <span class="hljs-number">2</span>;   <span class="hljs-comment">// PlaneGeometry stands up; lay it flat</span>
+ground.<span class="hljs-property">receiveShadow</span> = <span class="hljs-literal">true</span>;
+scene.<span class="hljs-title function_">add</span>(ground);
+</code></pre>
+<p><code>opacity</code> sets how dark the shadow is. This is the standard trick for product viewers and for putting 3D on top of a web page: the object looks grounded without a visible floor.</p>
+<p>The final demo also uses one more idea: the environment provides soft light from all around, and a single <code>DirectionalLight</code> provides the sun and its shadow. If the HDR has a visible sun, place the light so it comes from the same direction; the eye notices when the shadow and the bright side of the sky disagree.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-3/step-7-final.webp" alt="Screenshot of the final demo: the orange low-poly fox walking on a blurred background of beige ground and pale sky, with a soft dark shadow under and behind it and no visible floor. On the right, a panel titled Part 3 controls with folders for Environment, Tone mapping, Shadows and Animation." width="960" height="600" loading="lazy">
+  <figcaption>The final demo: HDR lighting with a blurred background, ACES Filmic tone mapping, a fitted directional shadow on a <code>ShadowMaterial</code> ground. (<a href="/3d-tutorial/demos/part-3/" target="_blank" rel="noopener">demos/part-3/</a>)</figcaption>
+</figure>
+<blockquote>
+<p>The panel's shadow checkbox toggles <code>sun.castShadow</code>, not <code>renderer.shadowMap.enabled</code>. Turning <code>shadowMap.enabled</code> on or off after the first frame does not rebuild materials that have already been compiled, so they keep their old shader. If you really need to switch it, also set <code>material.needsUpdate = true</code> on every material.</p>
+</blockquote>
+<h2>When it goes wrong: common pitfalls</h2>
+<p>Almost every &quot;my model does not work&quot; question is one of these.</p>
+<p><strong>The model is black.</strong></p>
+<ul>
+<li>There is no light and no environment. PBR materials reflect light; with none, they are black (step 3 above).</li>
+<li>The material is fully metallic (<code>metalness: 1</code>) and there is no <code>scene.environment</code>. Metals have no diffuse colour; they only reflect their surroundings, so with nothing to reflect they are black even under strong lights. Add an environment.</li>
+<li>A texture failed to load. Check the console and the Network tab for 404s: a <code>.gltf</code> file points at its <code>.bin</code> and images by relative path, and those files have to be next to it on the server.</li>
+<li>You are opening the page from <code>file://</code>. The browser blocks loading files that way. Serve the folder over HTTP.</li>
+</ul>
+<p><strong>The model is invisible, giant or tiny.</strong></p>
+<ul>
+<li>Measure it with <code>Box3</code> and print the size. Expect anything from 0.001 to 10,000.</li>
+<li>If it is huge, the camera may be <strong>inside</strong> it, and since triangles are only drawn from the front, you see nothing at all.</li>
+<li>If it is far from the origin, it may be beyond the camera's <code>far</code> plane. Centre it as shown above, or check <code>box.getCenter()</code>.</li>
+</ul>
+<p><strong>There are no shadows.</strong></p>
+<ul>
+<li>Check the four switches: <code>renderer.shadowMap.enabled</code>, <code>light.castShadow</code>, <code>castShadow</code> on the <strong>meshes</strong> (not the group), <code>receiveShadow</code> on the floor.</li>
+<li>The light cannot cast: <code>AmbientLight</code>, <code>HemisphereLight</code> and <code>scene.environment</code> never cast shadows.</li>
+<li>The objects are outside the shadow camera's box, or the box is so big that the shadow is a faint smudge. Add a <code>CameraHelper</code> and look. A shadow that ends in a straight line is cut off by the edge of the box.</li>
+<li>The floor uses <code>MeshBasicMaterial</code>, which ignores lights and therefore shadows. Use a lit material or <code>ShadowMaterial</code>.</li>
+</ul>
+<p><strong>Shadow acne: stripes, moiré, a dirty-looking surface.</strong></p>
+<ul>
+<li>Tighten the shadow camera (all six values), then add a little <code>normalBias</code>, then a tiny negative <code>bias</code>. Raising <code>mapSize</code> helps a little; fitting helps more.</li>
+<li>If the shadow floats away from the object, you overdid the bias: that is peter-panning.</li>
+</ul>
+<h2>The full code</h2>
+<p>Here is the final demo in one file. Next to it you need two folders from the repo: <code>models/</code> with <code>Fox.glb</code> and <code>textures/</code> with the HDR. Because the page loads files, serve the folder over HTTP: <code>npx serve .</code> or <code>python3 -m http.server</code> in the folder, then open the address it prints.</p>
+<pre class="hljs"><code class="language-html"><span class="hljs-meta">&lt;!doctype <span class="hljs-keyword">html</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">html</span> <span class="hljs-attr">lang</span>=<span class="hljs-string">&quot;en&quot;</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">head</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">charset</span>=<span class="hljs-string">&quot;utf-8&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">name</span>=<span class="hljs-string">&quot;viewport&quot;</span> <span class="hljs-attr">content</span>=<span class="hljs-string">&quot;width=device-width, initial-scale=1&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">title</span>&gt;</span>Loading glTF models, shadows and environment lighting · final demo<span class="hljs-tag">&lt;/<span class="hljs-name">title</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">style</span>&gt;</span><span class="language-css">
+    <span class="hljs-selector-tag">html</span>, <span class="hljs-selector-tag">body</span> { <span class="hljs-attribute">margin</span>: <span class="hljs-number">0</span>; <span class="hljs-attribute">height</span>: <span class="hljs-number">100%</span>; <span class="hljs-attribute">background</span>: <span class="hljs-number">#000</span>; }
+    <span class="hljs-selector-tag">canvas</span> { <span class="hljs-attribute">display</span>: block; }
+    <span class="hljs-selector-id">#status</span> { <span class="hljs-attribute">position</span>: absolute; <span class="hljs-attribute">left</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">top</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">font</span>: <span class="hljs-number">400</span> <span class="hljs-number">12px</span>/<span class="hljs-number">1.45</span> ui-monospace, Menlo, Consolas, monospace; <span class="hljs-attribute">color</span>: <span class="hljs-number">#e7eaf0</span>; <span class="hljs-attribute">background</span>: <span class="hljs-built_in">rgba</span>(<span class="hljs-number">18</span>, <span class="hljs-number">21</span>, <span class="hljs-number">29</span>, .<span class="hljs-number">85</span>); <span class="hljs-attribute">border</span>: <span class="hljs-number">1px</span> solid <span class="hljs-number">#3a4258</span>; <span class="hljs-attribute">border-radius</span>: <span class="hljs-number">8px</span>; <span class="hljs-attribute">padding</span>: <span class="hljs-number">8px</span> <span class="hljs-number">11px</span>; }
+    <span class="hljs-selector-id">#status</span><span class="hljs-selector-class">.error</span> { <span class="hljs-attribute">color</span>: <span class="hljs-number">#ff7a85</span>; <span class="hljs-attribute">border-color</span>: <span class="hljs-number">#ff7a85</span>; }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">style</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;importmap&quot;</span>&gt;</span><span class="language-javascript">
+    {
+      <span class="hljs-string">&quot;imports&quot;</span>: {
+        <span class="hljs-string">&quot;three&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js&quot;</span>,
+        <span class="hljs-string">&quot;three/addons/&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/&quot;</span>
+      }
+    }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">head</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">body</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">div</span> <span class="hljs-attr">id</span>=<span class="hljs-string">&quot;status&quot;</span>&gt;</span>Loading…<span class="hljs-tag">&lt;/<span class="hljs-name">div</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;module&quot;</span>&gt;</span><span class="language-javascript">
+    <span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">OrbitControls</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/controls/OrbitControls.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">GLTFLoader</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/loaders/GLTFLoader.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">HDRLoader</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/loaders/HDRLoader.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">RoomEnvironment</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/environments/RoomEnvironment.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> <span class="hljs-variable constant_">GUI</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/libs/lil-gui.module.min.js&#x27;</span>;
+
+    <span class="hljs-keyword">const</span> status = <span class="hljs-variable language_">document</span>.<span class="hljs-title function_">getElementById</span>(<span class="hljs-string">&#x27;status&#x27;</span>);
+
+    <span class="hljs-comment">// Scene and camera</span>
+    <span class="hljs-keyword">const</span> scene = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Scene</span>();
+    <span class="hljs-keyword">const</span> backgroundColor = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-number">0x1b1f2a</span>);
+
+    <span class="hljs-keyword">const</span> camera = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PerspectiveCamera</span>(<span class="hljs-number">45</span>, innerWidth / innerHeight, <span class="hljs-number">0.1</span>, <span class="hljs-number">100</span>);
+    camera.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">2.8</span>, <span class="hljs-number">1.5</span>, <span class="hljs-number">3.6</span>);
+
+    <span class="hljs-comment">// Renderer: tone mapping for the HDR light, shadows switched on</span>
+    <span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGLRenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span> });
+    renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+    renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    renderer.<span class="hljs-property">toneMapping</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">ACESFilmicToneMapping</span>;
+    renderer.<span class="hljs-property">toneMappingExposure</span> = <span class="hljs-number">1</span>;
+    renderer.<span class="hljs-property">shadowMap</span>.<span class="hljs-property">enabled</span> = <span class="hljs-literal">true</span>;
+    <span class="hljs-variable language_">document</span>.<span class="hljs-property">body</span>.<span class="hljs-title function_">appendChild</span>(renderer.<span class="hljs-property">domElement</span>);
+
+    <span class="hljs-keyword">const</span> controls = <span class="hljs-keyword">new</span> <span class="hljs-title class_">OrbitControls</span>(camera, renderer.<span class="hljs-property">domElement</span>);
+    controls.<span class="hljs-property">target</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0.55</span>, <span class="hljs-number">0</span>);
+    controls.<span class="hljs-property">enableDamping</span> = <span class="hljs-literal">true</span>;
+    controls.<span class="hljs-property">maxPolarAngle</span> = <span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> / <span class="hljs-number">2</span> - <span class="hljs-number">0.05</span>;   <span class="hljs-comment">// stay above the ground</span>
+    controls.<span class="hljs-property">minDistance</span> = <span class="hljs-number">1.5</span>;
+    controls.<span class="hljs-property">maxDistance</span> = <span class="hljs-number">10</span>;
+
+    <span class="hljs-comment">// Load the model and the HDR at the same time, and say so if either fails</span>
+    <span class="hljs-keyword">let</span> gltf, hdrTexture;
+    <span class="hljs-keyword">try</span> {
+      [gltf, hdrTexture] = <span class="hljs-keyword">await</span> <span class="hljs-title class_">Promise</span>.<span class="hljs-title function_">all</span>([
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">GLTFLoader</span>().<span class="hljs-title function_">loadAsync</span>(<span class="hljs-string">&#x27;models/Fox.glb&#x27;</span>),
+        <span class="hljs-keyword">new</span> <span class="hljs-title class_">HDRLoader</span>().<span class="hljs-title function_">loadAsync</span>(<span class="hljs-string">&#x27;textures/rosendal_plains_2_1k.hdr&#x27;</span>),
+      ]);
+    } <span class="hljs-keyword">catch</span> (error) {
+      status.<span class="hljs-property">className</span> = <span class="hljs-string">&#x27;error&#x27;</span>;
+      status.<span class="hljs-property">textContent</span> = <span class="hljs-string">`Loading failed: <span class="hljs-subst">${error.message}</span>`</span>;
+      <span class="hljs-keyword">throw</span> error;
+    }
+    status.<span class="hljs-title function_">remove</span>();
+
+    <span class="hljs-comment">// Environments: the HDR photo, or the procedural room</span>
+    hdrTexture.<span class="hljs-property">mapping</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">EquirectangularReflectionMapping</span>;
+    <span class="hljs-keyword">const</span> pmrem = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PMREMGenerator</span>(renderer);
+    <span class="hljs-keyword">const</span> roomTexture = pmrem.<span class="hljs-title function_">fromScene</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">RoomEnvironment</span>(), <span class="hljs-number">0.04</span>).<span class="hljs-property">texture</span>;
+    pmrem.<span class="hljs-title function_">dispose</span>();
+
+    <span class="hljs-comment">// The fox: fit to 2 units, stand it on the ground, let every mesh cast a shadow</span>
+    <span class="hljs-keyword">const</span> model = gltf.<span class="hljs-property">scene</span>;
+    <span class="hljs-keyword">const</span> box = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Box3</span>().<span class="hljs-title function_">setFromObject</span>(model);
+    <span class="hljs-keyword">const</span> size = box.<span class="hljs-title function_">getSize</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>());
+    model.<span class="hljs-property">scale</span>.<span class="hljs-title function_">setScalar</span>(<span class="hljs-number">2</span> / <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">max</span>(size.<span class="hljs-property">x</span>, size.<span class="hljs-property">y</span>, size.<span class="hljs-property">z</span>));
+    box.<span class="hljs-title function_">setFromObject</span>(model);
+    <span class="hljs-keyword">const</span> center = box.<span class="hljs-title function_">getCenter</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>());
+    model.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(-center.<span class="hljs-property">x</span>, -box.<span class="hljs-property">min</span>.<span class="hljs-property">y</span>, -center.<span class="hljs-property">z</span>);
+    model.<span class="hljs-title function_">traverse</span>(<span class="hljs-function">(<span class="hljs-params">child</span>) =&gt;</span> {
+      <span class="hljs-keyword">if</span> (child.<span class="hljs-property">isMesh</span>) child.<span class="hljs-property">castShadow</span> = <span class="hljs-literal">true</span>;
+    });
+    scene.<span class="hljs-title function_">add</span>(model);
+
+    <span class="hljs-comment">// Animation</span>
+    <span class="hljs-keyword">const</span> mixer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">AnimationMixer</span>(model);
+    <span class="hljs-keyword">const</span> actions = {};
+    <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> clip <span class="hljs-keyword">of</span> gltf.<span class="hljs-property">animations</span>) actions[clip.<span class="hljs-property">name</span>] = mixer.<span class="hljs-title function_">clipAction</span>(clip);
+    <span class="hljs-keyword">let</span> current = actions.<span class="hljs-property">Walk</span>;
+    current.<span class="hljs-title function_">play</span>();
+
+    <span class="hljs-comment">// A ground that is invisible except for the shadows that land on it</span>
+    <span class="hljs-keyword">const</span> ground = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(
+      <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PlaneGeometry</span>(<span class="hljs-number">12</span>, <span class="hljs-number">12</span>),
+      <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">ShadowMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0x000000</span>, <span class="hljs-attr">opacity</span>: <span class="hljs-number">0.4</span> })
+    );
+    ground.<span class="hljs-property">rotation</span>.<span class="hljs-property">x</span> = -<span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> / <span class="hljs-number">2</span>;
+    ground.<span class="hljs-property">receiveShadow</span> = <span class="hljs-literal">true</span>;
+    scene.<span class="hljs-title function_">add</span>(ground);
+
+    <span class="hljs-comment">// The one light that casts shadows, with its shadow camera fitted around the fox</span>
+    <span class="hljs-keyword">const</span> sun = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">DirectionalLight</span>(<span class="hljs-number">0xffffff</span>, <span class="hljs-number">2</span>);
+    sun.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">2.5</span>, <span class="hljs-number">5</span>, <span class="hljs-number">2</span>);
+    sun.<span class="hljs-property">castShadow</span> = <span class="hljs-literal">true</span>;
+    sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">mapSize</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">2048</span>, <span class="hljs-number">2048</span>);
+    <span class="hljs-title class_">Object</span>.<span class="hljs-title function_">assign</span>(sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>, { <span class="hljs-attr">left</span>: -<span class="hljs-number">2</span>, <span class="hljs-attr">right</span>: <span class="hljs-number">2</span>, <span class="hljs-attr">top</span>: <span class="hljs-number">2</span>, <span class="hljs-attr">bottom</span>: -<span class="hljs-number">2</span>, <span class="hljs-attr">near</span>: <span class="hljs-number">2</span>, <span class="hljs-attr">far</span>: <span class="hljs-number">10</span> });
+    sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">bias</span> = -<span class="hljs-number">0.0005</span>;
+    sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">normalBias</span> = <span class="hljs-number">0.02</span>;
+    sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">radius</span> = <span class="hljs-number">3</span>;
+    scene.<span class="hljs-title function_">add</span>(sun);
+
+    <span class="hljs-keyword">const</span> helper = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">CameraHelper</span>(sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>);
+    helper.<span class="hljs-property">visible</span> = <span class="hljs-literal">false</span>;
+    scene.<span class="hljs-title function_">add</span>(helper);
+
+    <span class="hljs-comment">// Everything the panel can change</span>
+    <span class="hljs-keyword">const</span> settings = {
+      <span class="hljs-attr">environment</span>: <span class="hljs-string">&#x27;HDR photo&#x27;</span>,
+      <span class="hljs-attr">background</span>: <span class="hljs-string">&#x27;blurred HDR&#x27;</span>,
+      <span class="hljs-attr">blurriness</span>: <span class="hljs-number">0.35</span>,
+      <span class="hljs-attr">environmentIntensity</span>: <span class="hljs-number">1</span>,
+      <span class="hljs-attr">toneMapping</span>: <span class="hljs-string">&#x27;ACES Filmic&#x27;</span>,
+      <span class="hljs-attr">exposure</span>: <span class="hljs-number">1</span>,
+      <span class="hljs-attr">shadows</span>: <span class="hljs-literal">true</span>,
+      <span class="hljs-attr">bias</span>: sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">bias</span>,
+      <span class="hljs-attr">shadowOpacity</span>: <span class="hljs-number">0.4</span>,
+      <span class="hljs-attr">helper</span>: <span class="hljs-literal">false</span>,
+      <span class="hljs-attr">clip</span>: <span class="hljs-string">&#x27;Walk&#x27;</span>,
+      <span class="hljs-attr">speed</span>: <span class="hljs-number">1</span>,
+    };
+
+    <span class="hljs-keyword">const</span> toneMappings = {
+      <span class="hljs-string">&#x27;ACES Filmic&#x27;</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">ACESFilmicToneMapping</span>,
+      <span class="hljs-title class_">AgX</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">AgXToneMapping</span>,
+      <span class="hljs-title class_">Neutral</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">NeutralToneMapping</span>,
+      <span class="hljs-title class_">None</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">NoToneMapping</span>,
+    };
+
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">applyEnvironment</span>(<span class="hljs-params"></span>) {
+      scene.<span class="hljs-property">environment</span> = { <span class="hljs-string">&#x27;HDR photo&#x27;</span>: hdrTexture, <span class="hljs-title class_">RoomEnvironment</span>: roomTexture, <span class="hljs-attr">none</span>: <span class="hljs-literal">null</span> }[settings.<span class="hljs-property">environment</span>];
+      scene.<span class="hljs-property">environmentIntensity</span> = settings.<span class="hljs-property">environmentIntensity</span>;
+      <span class="hljs-keyword">const</span> hdrBackground = settings.<span class="hljs-property">background</span> !== <span class="hljs-string">&#x27;flat colour&#x27;</span> &amp;&amp; settings.<span class="hljs-property">environment</span> === <span class="hljs-string">&#x27;HDR photo&#x27;</span>;
+      scene.<span class="hljs-property">background</span> = hdrBackground ? hdrTexture : backgroundColor;
+      scene.<span class="hljs-property">backgroundBlurriness</span> = settings.<span class="hljs-property">background</span> === <span class="hljs-string">&#x27;blurred HDR&#x27;</span> ? settings.<span class="hljs-property">blurriness</span> : <span class="hljs-number">0</span>;
+    }
+    <span class="hljs-title function_">applyEnvironment</span>();
+
+    <span class="hljs-keyword">const</span> gui = <span class="hljs-keyword">new</span> <span class="hljs-title function_">GUI</span>({ <span class="hljs-attr">title</span>: <span class="hljs-string">&#x27;Part 3 controls&#x27;</span> });
+
+    <span class="hljs-keyword">const</span> envFolder = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Environment&#x27;</span>);
+    envFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;environment&#x27;</span>, [<span class="hljs-string">&#x27;HDR photo&#x27;</span>, <span class="hljs-string">&#x27;RoomEnvironment&#x27;</span>, <span class="hljs-string">&#x27;none&#x27;</span>]).<span class="hljs-title function_">onChange</span>(applyEnvironment);
+    envFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;background&#x27;</span>, [<span class="hljs-string">&#x27;blurred HDR&#x27;</span>, <span class="hljs-string">&#x27;sharp HDR&#x27;</span>, <span class="hljs-string">&#x27;flat colour&#x27;</span>]).<span class="hljs-title function_">onChange</span>(applyEnvironment);
+    envFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;blurriness&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0.01</span>).<span class="hljs-title function_">onChange</span>(applyEnvironment);
+    envFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;environmentIntensity&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">3</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;intensity&#x27;</span>).<span class="hljs-title function_">onChange</span>(applyEnvironment);
+
+    <span class="hljs-keyword">const</span> toneFolder = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Tone mapping&#x27;</span>);
+    toneFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;toneMapping&#x27;</span>, <span class="hljs-title class_">Object</span>.<span class="hljs-title function_">keys</span>(toneMappings)).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> { renderer.<span class="hljs-property">toneMapping</span> = toneMappings[v]; });
+    toneFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;exposure&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">3</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> { renderer.<span class="hljs-property">toneMappingExposure</span> = v; });
+
+    <span class="hljs-keyword">const</span> shadowFolder = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Shadows&#x27;</span>);
+    shadowFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;shadows&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> { sun.<span class="hljs-property">castShadow</span> = v; });
+    shadowFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;bias&#x27;</span>, -<span class="hljs-number">0.01</span>, <span class="hljs-number">0.005</span>, <span class="hljs-number">0.0001</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> { sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">bias</span> = v; });
+    shadowFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;shadowOpacity&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0.01</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;ground opacity&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> { ground.<span class="hljs-property">material</span>.<span class="hljs-property">opacity</span> = v; });
+    shadowFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;helper&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;shadow camera&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> { helper.<span class="hljs-property">visible</span> = v; });
+
+    <span class="hljs-keyword">const</span> animFolder = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Animation&#x27;</span>);
+    animFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;clip&#x27;</span>, <span class="hljs-title class_">Object</span>.<span class="hljs-title function_">keys</span>(actions)).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">name</span>) =&gt;</span> {
+      <span class="hljs-keyword">const</span> next = actions[name];
+      <span class="hljs-keyword">if</span> (next === current) <span class="hljs-keyword">return</span>;
+      next.<span class="hljs-title function_">reset</span>().<span class="hljs-title function_">play</span>();
+      current.<span class="hljs-title function_">crossFadeTo</span>(next, <span class="hljs-number">0.4</span>);
+      current = next;
+    });
+    animFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;speed&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">2</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> { mixer.<span class="hljs-property">timeScale</span> = v; });
+
+    <span class="hljs-keyword">if</span> (innerWidth &lt; <span class="hljs-number">700</span>) gui.<span class="hljs-title function_">close</span>();
+
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">onResize</span>(<span class="hljs-params"></span>) {
+      camera.<span class="hljs-property">aspect</span> = innerWidth / innerHeight;
+      camera.<span class="hljs-title function_">updateProjectionMatrix</span>();
+      renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+      renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    }
+    <span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;resize&#x27;</span>, onResize);
+
+    <span class="hljs-keyword">const</span> timer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Timer</span>();
+
+    renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">time</span>) =&gt;</span> {
+      timer.<span class="hljs-title function_">update</span>(time);
+      mixer.<span class="hljs-title function_">update</span>(timer.<span class="hljs-title function_">getDelta</span>());
+      controls.<span class="hljs-title function_">update</span>();
+      renderer.<span class="hljs-title function_">render</span>(scene, camera);
+    });
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">body</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">html</span>&gt;</span>
+</code></pre>
+<p><strong>Credits.</strong> The Fox model comes from the Khronos <a href="https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox" target="_blank" rel="noopener">glTF Sample Assets</a>: model by PixelMannen (<a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noopener">CC0 1.0</a>), rigging and animation by tomkranis (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>), conversion to glTF by @AsoboStudio and @scurest (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>). The HDR is <a href="https://polyhaven.com/a/rosendal_plains_2" target="_blank" rel="noopener">Rosendal Plains 2</a> from Poly Haven (<a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noopener">CC0 1.0</a>). Licence details are in <a href="https://github.com/iodiot/3d-tutorial/blob/main/demos/part-3/CREDITS.md" target="_blank" rel="noopener">demos/part-3/CREDITS.md</a>.</p>
+<p>The step-by-step versions are in the repo too: <a href="/3d-tutorial/demos/part-3/step-1.html">step-1.html</a> (loading and fitting), <a href="/3d-tutorial/demos/part-3/step-2.html">step-2.html</a> (animation and skeleton), <a href="/3d-tutorial/demos/part-3/step-3.html">step-3.html</a> (environments), <a href="/3d-tutorial/demos/part-3/step-4.html">step-4.html</a> (tone mapping), <a href="/3d-tutorial/demos/part-3/step-5.html">step-5.html</a> (shadow camera) and <a href="/3d-tutorial/demos/part-3/step-6.html">step-6.html</a> (the bias lab).</p>
+<h2>A few things to try</h2>
+<ul>
+<li>In the final demo, switch tone mapping to <code>None</code> and push exposure up and down. Then do the same with <code>AgX</code>. Watch the fox's orange in the brightest parts.</li>
+<li>Tick &quot;shadow camera&quot; and drag the bias slider to its most negative value. Watch the shadow come loose from the feet. Then drag it to positive values and look for stripes on the fox.</li>
+<li>In step 5, set <code>mapSize</code> to 256 and <code>type</code> to <code>BasicShadowMap</code> to see raw shadow texels, then go back to <code>PCFShadowMap</code> and raise <code>shadow.radius</code>.</li>
+<li>Rotate the environment: <code>scene.environmentRotation.y = Math.PI / 2</code> (and the same for <code>backgroundRotation</code>). Then move the sun so the shadow agrees with the sky.</li>
+<li>Load your own model. <a href="https://poly.pizza/" target="_blank" rel="noopener">Poly Pizza</a> and <a href="https://sketchfab.com/" target="_blank" rel="noopener">Sketchfab</a> have many free downloadable glTF models (check each licence). Print its tree, fit it with <code>Box3</code>, and play <code>gltf.animations[0]</code> if it has any. Different HDRs are on <a href="https://polyhaven.com/hdris" target="_blank" rel="noopener">Poly Haven</a>.</li>
+</ul>
+<h2>Next time</h2>
+<p>We can now load what artists make, animate it, light it like a photo and ground it with a shadow. Everything so far, though, has used materials that Three.js wrote for us. In Part 4 we write our own: <code>ShaderMaterial</code>, the basics of GLSL, what a vertex shader and a fragment shader actually do, and how the uniforms, attributes and varyings from all those materials fit together. After shaders comes WebGPU: <code>WebGPURenderer</code> and TSL, the new node-based shading language. A reader asked for that chapter, so it is coming soon, right after shaders. See you there.</p>
+</div>
+  <nav class="pager"><a href="/3d-tutorial/part-2-geometry-materials-textures/">← Part 2: Geometry, Materials and Textures</a><span class="soon-next">Next: Part 4, Shaders (coming soon)</span></nav>
+  <aside class="support" aria-label="Support the series">
+  <p>This series is free. If it helped you, you can support it with a coffee.</p>
+  <div class="support-links"><a class="support-img" href="https://www.buymeacoffee.com/iodiot" target="_blank" rel="noopener" title="Buy Me a Coffee"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height:50px;width:181px" loading="lazy"></a></div>
+</aside>
+</article>
+</main>
+<footer class="foot"><p>© Mike Smahin · <a href="https://github.com/iodiot/3d-tutorial" target="_blank" rel="noopener">source on GitHub</a></p></footer>
+<script data-goatcounter="https://iodiot.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>
