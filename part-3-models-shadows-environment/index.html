@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Three.js from Scratch, Part 3: Loading glTF Models, Shadows and Environment Lighting — Mike Smahin</title>
+<title>Three.js from Scratch, Part 3: Models, Light and Shadows — Mike Smahin</title>
 <meta name="description" content="Load an animated glTF model, fit it to your scene with Box3, play its clips with AnimationMixer, light it with an HDR environment and tone mapping, and get directional-light shadows that actually look right. With diagrams, screenshots and a live demo.">
 <link rel="canonical" href="https://iodiot.github.io/3d-tutorial/part-3-models-shadows-environment/">
 <meta property="og:type" content="article">
-<meta property="og:title" content="Three.js from Scratch, Part 3: Loading glTF Models, Shadows and Environment Lighting — Mike Smahin">
+<meta property="og:title" content="Three.js from Scratch, Part 3: Models, Light and Shadows — Mike Smahin">
 <meta property="og:description" content="Load an animated glTF model, fit it to your scene with Box3, play its clips with AnimationMixer, light it with an HDR environment and tone mapping, and get directional-light shadows that actually look right. With diagrams, screenshots and a live demo.">
 <meta property="og:url" content="https://iodiot.github.io/3d-tutorial/part-3-models-shadows-environment/">
 <meta property="og:image" content="https://iodiot.github.io/3d-tutorial/images/part-3/social-card.png">
@@ -30,7 +30,7 @@
 <article class="post">
   <header class="post-head">
     <p class="eyebrow"><a href="/3d-tutorial/">← Three.js from Scratch · all parts</a></p>
-    <h1>Three.js from Scratch, Part 3: Loading glTF Models, Shadows and Environment Lighting</h1>
+    <h1>Three.js from Scratch, Part 3: Models, Light and Shadows</h1>
     <p class="meta-line"><time datetime="2026-10-25">Oct 25, 2026</time> · Mike Smahin</p>
     <ul class="tags"><li class="topic">part 3</li><li>three.js</li><li>gltf</li><li>shadows</li><li>lighting</li></ul>
   </header>
@@ -518,7 +518,7 @@ scene.<span class="hljs-title function_">add</span>(ground);
 <span class="hljs-tag">&lt;<span class="hljs-name">head</span>&gt;</span>
   <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">charset</span>=<span class="hljs-string">&quot;utf-8&quot;</span>&gt;</span>
   <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">name</span>=<span class="hljs-string">&quot;viewport&quot;</span> <span class="hljs-attr">content</span>=<span class="hljs-string">&quot;width=device-width, initial-scale=1&quot;</span>&gt;</span>
-  <span class="hljs-tag">&lt;<span class="hljs-name">title</span>&gt;</span>Loading glTF models, shadows and environment lighting · final demo<span class="hljs-tag">&lt;/<span class="hljs-name">title</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">title</span>&gt;</span>Models, light and shadows · final demo<span class="hljs-tag">&lt;/<span class="hljs-name">title</span>&gt;</span>
   <span class="hljs-tag">&lt;<span class="hljs-name">style</span>&gt;</span><span class="language-css">
     <span class="hljs-selector-tag">html</span>, <span class="hljs-selector-tag">body</span> { <span class="hljs-attribute">margin</span>: <span class="hljs-number">0</span>; <span class="hljs-attribute">height</span>: <span class="hljs-number">100%</span>; <span class="hljs-attribute">background</span>: <span class="hljs-number">#000</span>; }
     <span class="hljs-selector-tag">canvas</span> { <span class="hljs-attribute">display</span>: block; }
