@@ -1,8 +1,8 @@
 ---
-title: "Three.js from Scratch, Part 3: Loading glTF Models, Shadows and Environment Lighting"
+title: "Three.js from Scratch, Part 3: Models, Light and Shadows"
 date: 2026-10-25
 part: 3
-short: glTF Models, Shadows and Environment Lighting
+short: Models, Light and Shadows
 slug: part-3-models-shadows-environment
 demo: demos/part-3/
 tags: [three.js, gltf, shadows, lighting]
@@ -608,7 +608,7 @@ Here is the final demo in one file. Next to it you need two folders from the rep
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Loading glTF models, shadows and environment lighting · final demo</title>
+  <title>Models, light and shadows · final demo</title>
   <style>
     html, body { margin: 0; height: 100%; background: #000; }
     canvas { display: block; }
