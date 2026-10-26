@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 3 · Vertex displacement: animated waves</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel"></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    // ?segments=16 and ?wireframe=1 are handy for comparing mesh resolutions
+    const params = new URLSearchParams(location.search);
+    const settings = {
+      segments: Number(params.get('segments') || 128),
+      wireframe: params.get('wireframe') === '1',
+      speed: 1,
+      deep: '#0b3d91',
+      crest: '#7cf5d4',
+    };
+    const status = document.getElementById('status');
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(3.2, 2.6, 4.2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    const uniforms = {
+      uTime: { value: 0 },
+      uAmplitude: { value: 0.25 },
+      uFrequency: { value: 3.0 },
+      uDeep: { value: new THREE.Color(settings.deep) },
+      uCrest: { value: new THREE.Color(settings.crest) },
+    };
+
+    const vertexShader = /* glsl */ `
+      uniform float uTime;
+      uniform float uAmplitude;
+      uniform float uFrequency;
+
+      varying float vElevation;
+
+      // Two sine waves crossing each other. p is a point on the flat plane.
+      float elevation(vec2 p) {
+        return (
+          sin(p.x * uFrequency + uTime) * 0.5 +
+          sin(p.y * uFrequency * 0.8 + uTime * 1.3) * 0.5
+        ) * uAmplitude;
+      }
+
+      void main() {
+        vec3 p = position;          // PlaneGeometry lies in x/y, so z is "up" before we rotate the mesh
+        p.z += elevation(p.xy);
+
+        vElevation = p.z;           // hand the height to the fragment shader
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+      }
+    `;
+
+    const fragmentShader = /* glsl */ `
+      uniform float uAmplitude;
+      uniform vec3 uDeep;
+      uniform vec3 uCrest;
+
+      varying float vElevation;     // interpolated between the three vertices of each triangle
+
+      void main() {
+        float h = smoothstep(-uAmplitude, uAmplitude, vElevation);
+        vec3 color = mix(uDeep, uCrest, h);
+        gl_FragColor = vec4(color, 1.0);
+        #include <colorspace_fragment>
+      }
+    `;
+
+    const material = new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader, wireframe: settings.wireframe });
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(4, 4, settings.segments, settings.segments), material);
+    water.rotation.x = -Math.PI / 2;
+    scene.add(water);
+
+    function rebuild() {
+      water.geometry.dispose();
+      water.geometry = new THREE.PlaneGeometry(4, 4, settings.segments, settings.segments);
+      describe();
+    }
+    function describe() {
+      const vertices = water.geometry.attributes.position.count;
+      status.textContent = `PlaneGeometry(4, 4, ${settings.segments}, ${settings.segments}) · ${vertices.toLocaleString('en-US')} vertices\nthe vertex shader moves every one of them, every frame`;
+    }
+    describe();
+
+    const gui = new GUI({ title: 'Step 3 waves' });
+    gui.add(uniforms.uAmplitude, 'value', 0, 0.6, 0.01).name('amplitude');
+    gui.add(uniforms.uFrequency, 'value', 0.2, 6, 0.05).name('frequency');
+    gui.add(settings, 'speed', 0, 3, 0.05);
+    gui.add(settings, 'segments', [4, 16, 32, 64, 128, 256]).onChange(rebuild);
+    gui.add(material, 'wireframe');
+    gui.addColor(settings, 'deep').onChange((v) => uniforms.uDeep.value.set(v));
+    gui.addColor(settings, 'crest').onChange((v) => uniforms.uCrest.value.set(v));
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    const timer = new THREE.Timer();
+
+    renderer.setAnimationLoop((time) => {
+      timer.update(time);
+      uniforms.uTime.value += timer.getDelta() * settings.speed;
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

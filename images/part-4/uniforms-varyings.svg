@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 420" width="880" height="420" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs>
+    <marker id="y" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f2cc60"/></marker>
+    <marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#c79bff"/></marker>
+    <linearGradient id="e1" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff3d7f"/><stop offset="1" stop-color="#3d7bff"/></linearGradient>
+    <linearGradient id="e2" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff3d7f" stop-opacity="0"/><stop offset="1" stop-color="#7cf5d4"/></linearGradient>
+  </defs>
+  <rect width="880" height="420" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">UNIFORMS IN FROM JAVASCRIPT, VARYINGS BETWEEN SHADERS</text>
+
+  <!-- JS -->
+  <rect x="32" y="72" width="816" height="64" rx="12" fill="#f2cc60" fill-opacity=".08" stroke="#f2cc60" stroke-width="1.5"/>
+  <text x="52" y="98" fill="#f2cc60" font-size="14" font-weight="700">JavaScript (CPU), once per frame</text>
+  <text x="52" y="122" fill="#e7eaf0" font-size="13" font-family="ui-monospace,Menlo,Consolas,monospace">material.uniforms.uTime.value = elapsed;   uniforms.uColor.value.set('#ff3d7f');</text>
+  <path d="M200 136V178" stroke="#f2cc60" stroke-width="1.5" marker-end="url(#y)"/>
+  <path d="M680 136V178" stroke="#f2cc60" stroke-width="1.5" marker-end="url(#y)"/>
+  <text x="212" y="164" fill="#f2cc60" font-size="12">uniform float uTime;</text>
+  <text x="692" y="164" fill="#f2cc60" font-size="12">uniform vec3 uColor;</text>
+
+  <!-- vertex -->
+  <rect x="32" y="184" width="336" height="200" rx="12" fill="#1b2030" stroke="#7cf5d4" stroke-width="2"/>
+  <text x="52" y="210" fill="#7cf5d4" font-size="14" font-weight="700">Vertex shader: 3 runs, one per corner</text>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12.5" fill="#e7eaf0">
+    <text x="52" y="238"><tspan fill="#c79bff">varying</tspan> vec2 vUv;</text>
+    <text x="52" y="258">void main() {</text>
+    <text x="68" y="278">vUv = uv;  <tspan fill="#6b7386">// write it</tspan></text>
+    <text x="68" y="298">gl_Position = …;</text>
+    <text x="52" y="318">}</text>
+  </g>
+  <g font-size="12" fill="#9aa3b5">
+    <text x="52" y="346">corner A: vUv = (0, 0)</text>
+    <text x="52" y="362">corner B: vUv = (1, 0)</text>
+    <text x="52" y="378">corner C: vUv = (0.5, 1)</text>
+  </g>
+
+  <!-- interpolation -->
+  <path d="M368 284H426" stroke="#c79bff" stroke-width="1.5" marker-end="url(#p)"/>
+  <path d="M440 352L560 352L500 222Z" fill="url(#e1)"/>
+  <path d="M440 352L560 352L500 222Z" fill="url(#e2)"/>
+  <path d="M440 352L560 352L500 222Z" fill="none" stroke="#e7eaf0" stroke-width="1.5"/>
+  <circle cx="440" cy="352" r="5" fill="#ff3d7f"/><text x="424" y="376" fill="#ff3d7f" font-size="13" font-weight="700">A</text>
+  <circle cx="560" cy="352" r="5" fill="#3d7bff"/><text x="562" y="376" fill="#3d7bff" font-size="13" font-weight="700">B</text>
+  <circle cx="500" cy="222" r="5" fill="#7cf5d4"/><text x="510" y="220" fill="#7cf5d4" font-size="13" font-weight="700">C</text>
+  <circle cx="512" cy="318" r="4" fill="#12151d" stroke="#fff" stroke-width="1.5"/>
+  <text x="500" y="200" fill="#c79bff" font-size="12" text-anchor="middle">rasterizer blends</text>
+  <text x="500" y="404" fill="#9aa3b5" font-size="12" text-anchor="middle">each pixel gets a weighted mix of A, B, C</text>
+  <path d="M574 284H632" stroke="#c79bff" stroke-width="1.5" marker-end="url(#p)"/>
+
+  <!-- fragment -->
+  <rect x="640" y="184" width="208" height="200" rx="12" fill="#1b2030" stroke="#ff7a85" stroke-width="2"/>
+  <text x="656" y="210" fill="#ff7a85" font-size="14" font-weight="700">Fragment shader</text>
+  <text x="656" y="230" fill="#e7eaf0" font-size="12">thousands of runs</text>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12.5" fill="#e7eaf0">
+    <text x="656" y="258"><tspan fill="#c79bff">varying</tspan> vec2 vUv;</text>
+    <text x="656" y="282"><tspan fill="#6b7386">// read it: e.g.</tspan></text>
+    <text x="656" y="302">vUv ≈ (0.55, 0.27)</text>
+    <text x="656" y="330">gl_FragColor =</text>
+    <text x="672" y="350">vec4(uColor * vUv.y,</text>
+    <text x="672" y="370">     1.0);</text>
+  </g>
+</svg>

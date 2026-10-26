@@ -4,14 +4,9 @@
   "lead": "A step-by-step series for frontend developers: from a first lit cube to shaders, WebGPU and compute. Every part comes with diagrams, screenshots and a live demo you can open in your browser.",
   "planned": [
     {
-      "part": 4,
-      "title": "Shaders",
-      "about": "ShaderMaterial and GLSL basics: writing your own shaders, and what the GPU is actually doing."
-    },
-    {
       "part": 5,
-      "title": "WebGPU",
-      "about": "WebGPURenderer, the TSL shading language and compute."
+      "title": "WebGPU and TSL",
+      "about": "WebGPURenderer, node materials, the TSL shading language and compute."
     }
   ],
   "support": {

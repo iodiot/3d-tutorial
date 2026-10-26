@@ -27,8 +27,8 @@ Roughly, the plan is:
 1. **Your first scene** (this article): scene, camera, renderer, lights, the render loop.
 2. [Geometry, materials and textures](/3d-tutorial/part-2-geometry-materials-textures/): what a mesh is made of and how surfaces react to light.
 3. [Models, light and shadows](/3d-tutorial/part-3-models-shadows-environment/): real models, animation, HDR light and shadows.
-4. Shaders: `ShaderMaterial`, GLSL basics, and what the GPU is actually doing.
-5. WebGPU: Three.js's `WebGPURenderer`, the TSL shading language and compute.
+4. [Your first shaders](/3d-tutorial/part-4-shaders/): `ShaderMaterial`, GLSL basics, and what the GPU is actually doing.
+5. WebGPU and TSL: Three.js's `WebGPURenderer`, the TSL shading language and compute.
 
 The order may change as I write, but the direction will not: from "it renders" to "I know why it renders like that".
 

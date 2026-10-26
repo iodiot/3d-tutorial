@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Three.js from Scratch · Part 4 demo: Your First Shaders</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+    .hint { position: absolute; left: 12px; bottom: 12px; font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; pointer-events: none; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="hint">Drag to orbit · move the pointer over the water to make ripples</div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const scene = new THREE.Scene();
+    const fogColor = new THREE.Color('#0d1220');
+    scene.background = fogColor;
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(0, 3.1, 7.2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.6, 0);
+    controls.enableDamping = true;
+    controls.maxPolarAngle = Math.PI * 0.47;   // stay above the water
+    controls.minDistance = 3;
+    controls.maxDistance = 14;
+
+    // ---------- Water: ShaderMaterial with vertex waves, normals, lighting and fog ----------
+
+    const uniforms = {
+      uTime: { value: 0 },
+      uAmplitude: { value: 0.3 },
+      uFrequency: { value: 1.6 },
+      uChoppiness: { value: 0.8 },
+      uMouse: { value: new THREE.Vector2(0, 0) },     // in the plane's own x/y
+      uRipple: { value: 0 },                          // fades out when the pointer stops
+      uDeep: { value: new THREE.Color('#06204f') },
+      uCrest: { value: new THREE.Color('#1fa2b8') },
+      uFoam: { value: new THREE.Color('#e8fbff') },
+      uSky: { value: new THREE.Color('#6fb4e6') },
+      uLightDir: { value: new THREE.Vector3(-0.4, 0.8, -0.45).normalize() },
+      uFogColor: { value: fogColor },
+      uFogNear: { value: 6 },
+      uFogFar: { value: 16 },
+      uView: { value: 0 },                            // 0 shaded, 1 UVs, 2 normals, 3 elevation
+    };
+
+    const waterVertex = /* glsl */ `
+      uniform float uTime;
+      uniform float uAmplitude;
+      uniform float uFrequency;
+      uniform float uChoppiness;
+      uniform vec2 uMouse;
+      uniform float uRipple;
+
+      varying vec2 vUv;
+      varying float vElevation;
+      varying vec3 vWorldPosition;
+      varying vec3 vWorldNormal;
+
+      // Height of the water at a point p of the flat plane
+      float elevation(vec2 p) {
+        float e = sin(p.x * uFrequency + uTime) * cos(p.y * uFrequency * 0.6 + uTime * 0.7) * 0.6;
+        e += sin((p.x + p.y) * uFrequency * 1.7 - uTime * 1.4) * 0.25 * uChoppiness;
+        e += sin((p.x * 0.6 - p.y) * uFrequency * 3.1 + uTime * 2.1) * 0.12 * uChoppiness;
+
+        // Rings spreading out from the pointer, weaker with distance
+        float d = distance(p, uMouse);
+        e += sin(d * 9.0 - uTime * 6.0) * exp(-d * 1.1) * uRipple * 0.5;
+
+        return e * uAmplitude;
+      }
+
+      void main() {
+        vUv = uv;
+        vec3 p = position;
+        float e = elevation(p.xy);
+        p.z += e;
+        vElevation = e;
+
+        // The normal of a displaced surface: sample the height a tiny step away
+        // in x and in y, and build the normal from the two slopes.
+        float eps = 0.01;
+        float ex = elevation(p.xy + vec2(eps, 0.0));
+        float ey = elevation(p.xy + vec2(0.0, eps));
+        vec3 objectNormal = normalize(vec3(-(ex - e) / eps, -(ey - e) / eps, 1.0));
+
+        vec4 worldPosition = modelMatrix * vec4(p, 1.0);
+        vWorldPosition = worldPosition.xyz;
+        vWorldNormal = normalize(mat3(modelMatrix) * objectNormal);
+        gl_Position = projectionMatrix * viewMatrix * worldPosition;
+      }
+    `;
+
+    const waterFragment = /* glsl */ `
+      uniform float uAmplitude;
+      uniform vec3 uDeep;
+      uniform vec3 uCrest;
+      uniform vec3 uFoam;
+      uniform vec3 uSky;
+      uniform vec3 uLightDir;
+      uniform vec3 uFogColor;
+      uniform float uFogNear;
+      uniform float uFogFar;
+      uniform int uView;
+
+      varying vec2 vUv;
+      varying float vElevation;
+      varying vec3 vWorldPosition;
+      varying vec3 vWorldNormal;
+
+      void main() {
+        vec3 N = normalize(vWorldNormal);
+        vec3 V = normalize(cameraPosition - vWorldPosition);   // cameraPosition is built in
+        vec3 L = normalize(uLightDir);
+        float h = smoothstep(-uAmplitude, uAmplitude, vElevation);
+
+        vec3 color = mix(uDeep, uCrest, h);
+        color *= 0.35 + 0.65 * max(dot(N, L), 0.0);                    // diffuse
+        float fresnel = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+        color = mix(color, uSky, fresnel * 0.35);                        // sky reflection at grazing angles
+        vec3 H = normalize(L + V);
+        color += vec3(1.0) * pow(max(dot(N, H), 0.0), 300.0) * 1.2;     // sun glint
+        color = mix(color, uFoam, smoothstep(0.9, 1.0, h) * 0.35);      // foam on the highest crests
+
+        if (uView == 1) color = vec3(vUv, 0.0);
+        if (uView == 2) color = N * 0.5 + 0.5;
+        if (uView == 3) color = vec3(h);
+
+        float fog = smoothstep(uFogNear, uFogFar, distance(cameraPosition, vWorldPosition));
+        color = mix(color, uFogColor, fog);
+
+        gl_FragColor = vec4(color, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `;
+
+    const waterMaterial = new THREE.ShaderMaterial({ uniforms, vertexShader: waterVertex, fragmentShader: waterFragment });
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(24, 24, 384, 384), waterMaterial);
+    water.rotation.x = -Math.PI / 2;
+    scene.add(water);
+
+    // ---------- Orb: noise, a little vertex wobble and a fresnel rim ----------
+
+    const orbUniforms = {
+      uTime: uniforms.uTime,                           // shared: one object, two materials
+      uColorA: { value: new THREE.Color('#1a1446') },
+      uColorB: { value: new THREE.Color('#ff7a3d') },
+      uRimColor: { value: new THREE.Color('#7cf5d4') },
+      uNoiseScale: { value: 2.2 },
+      uWobble: { value: 0.08 },
+      uRimPower: { value: 2.5 },
+      uRimIntensity: { value: 1.4 },
+    };
+
+    const orbVertex = /* glsl */ `
+      uniform float uTime;
+      uniform float uWobble;
+      uniform float uNoiseScale;
+
+      varying vec3 vPosition;
+      varying vec3 vNormal;
+      varying vec3 vViewDir;
+
+      // Value noise: random numbers on a 3D grid, smoothly blended in between
+      float hash(vec3 p) {
+        p = fract(p * 0.3183099 + 0.1);
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+      }
+
+      float noise(vec3 x) {
+        vec3 i = floor(x);
+        vec3 f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);                // smooth the blend (no visible grid)
+        return mix(
+          mix(mix(hash(i + vec3(0, 0, 0)), hash(i + vec3(1, 0, 0)), f.x),
+              mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+          mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x),
+              mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
+          f.z);
+      }
+
+      // Fractal Brownian motion: the same noise at 5 sizes, each half as strong
+      float fbm(vec3 p) {
+        float value = 0.0;
+        float amplitude = 0.5;
+        for (int i = 0; i < 5; i++) {
+          value += amplitude * noise(p);
+          p *= 2.02;
+          amplitude *= 0.5;
+        }
+        return value;
+      }
+
+      void main() {
+        // Push each vertex out along its normal by a slowly changing noise value
+        float n = fbm(position * 1.5 + vec3(uTime * 0.3));
+        vec3 p = position + normal * (n - 0.5) * 2.0 * uWobble;
+
+        vPosition = position;
+        vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+        vNormal = normalize(normalMatrix * normal);
+        vViewDir = -mvPosition.xyz;
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `;
+
+    const orbFragment = /* glsl */ `
+      uniform float uTime;
+      uniform vec3 uColorA;
+      uniform vec3 uColorB;
+      uniform vec3 uRimColor;
+      uniform float uNoiseScale;
+      uniform float uRimPower;
+      uniform float uRimIntensity;
+
+      varying vec3 vPosition;
+      varying vec3 vNormal;
+      varying vec3 vViewDir;
+
+      // Value noise: random numbers on a 3D grid, smoothly blended in between
+      float hash(vec3 p) {
+        p = fract(p * 0.3183099 + 0.1);
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+      }
+
+      float noise(vec3 x) {
+        vec3 i = floor(x);
+        vec3 f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);                // smooth the blend (no visible grid)
+        return mix(
+          mix(mix(hash(i + vec3(0, 0, 0)), hash(i + vec3(1, 0, 0)), f.x),
+              mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+          mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x),
+              mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
+          f.z);
+      }
+
+      // Fractal Brownian motion: the same noise at 5 sizes, each half as strong
+      float fbm(vec3 p) {
+        float value = 0.0;
+        float amplitude = 0.5;
+        for (int i = 0; i < 5; i++) {
+          value += amplitude * noise(p);
+          p *= 2.02;
+          amplitude *= 0.5;
+        }
+        return value;
+      }
+
+      void main() {
+        float n = fbm(vPosition * uNoiseScale + vec3(0.0, uTime * 0.25, uTime * 0.1));
+        vec3 color = mix(uColorA, uColorB, smoothstep(0.35, 0.75, n));
+
+        float fresnel = pow(1.0 - clamp(dot(normalize(vNormal), normalize(vViewDir)), 0.0, 1.0), uRimPower);
+        color += uRimColor * fresnel * uRimIntensity;
+
+        gl_FragColor = vec4(color, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `;
+
+    const orbMaterial = new THREE.ShaderMaterial({ uniforms: orbUniforms, vertexShader: orbVertex, fragmentShader: orbFragment });
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.75, 128, 64), orbMaterial);
+    scene.add(orb);
+
+    // ---------- Pointer -> ripple centre ----------
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    let lastMove = -Infinity;
+    renderer.domElement.addEventListener('pointermove', (event) => {
+      pointer.set(event.clientX / innerWidth * 2 - 1, -(event.clientY / innerHeight) * 2 + 1);
+      raycaster.setFromCamera(pointer, camera);
+      const hit = raycaster.intersectObject(water)[0];   // hits the flat plane; close enough for ripples
+      if (hit) {
+        const local = water.worldToLocal(hit.point.clone());
+        uniforms.uMouse.value.set(local.x, local.y);
+        lastMove = performance.now();
+      }
+    });
+
+    // ---------- Panel ----------
+
+    const settings = {
+      speed: 1,
+      ripples: 1,
+      wireframe: false,
+      view: 'shaded',
+      deep: '#06204f',
+      crest: '#1fa2b8',
+      foam: '#e8fbff',
+      orbA: '#1a1446',
+      orbB: '#ff7a3d',
+      rim: '#7cf5d4',
+    };
+    const views = { shaded: 0, 'UVs': 1, normals: 2, elevation: 3 };
+
+    const gui = new GUI({ title: 'Part 4 controls' });
+
+    const wavesFolder = gui.addFolder('Waves (vertex shader)');
+    wavesFolder.add(uniforms.uAmplitude, 'value', 0, 0.8, 0.01).name('amplitude');
+    wavesFolder.add(uniforms.uFrequency, 'value', 0.3, 3, 0.05).name('frequency');
+    wavesFolder.add(uniforms.uChoppiness, 'value', 0, 1.5, 0.05).name('choppiness');
+    wavesFolder.add(settings, 'speed', 0, 3, 0.05);
+    wavesFolder.add(settings, 'ripples', 0, 2, 0.05).name('mouse ripples');
+    wavesFolder.add(waterMaterial, 'wireframe');
+
+    const waterFolder = gui.addFolder('Water (fragment shader)');
+    waterFolder.add(settings, 'view', Object.keys(views)).name('debug view').onChange((v) => { uniforms.uView.value = views[v]; });
+    waterFolder.addColor(settings, 'deep').onChange((v) => uniforms.uDeep.value.set(v));
+    waterFolder.addColor(settings, 'crest').onChange((v) => uniforms.uCrest.value.set(v));
+    waterFolder.addColor(settings, 'foam').onChange((v) => uniforms.uFoam.value.set(v));
+
+    const orbFolder = gui.addFolder('Orb (noise + fresnel)');
+    orbFolder.add(orbUniforms.uNoiseScale, 'value', 0.5, 8, 0.1).name('noise scale');
+    orbFolder.add(orbUniforms.uWobble, 'value', 0, 0.3, 0.01).name('wobble');
+    orbFolder.add(orbUniforms.uRimPower, 'value', 0.5, 8, 0.1).name('rim power');
+    orbFolder.add(orbUniforms.uRimIntensity, 'value', 0, 3, 0.05).name('rim intensity');
+    orbFolder.addColor(settings, 'orbA').name('colour A').onChange((v) => orbUniforms.uColorA.value.set(v));
+    orbFolder.addColor(settings, 'orbB').name('colour B').onChange((v) => orbUniforms.uColorB.value.set(v));
+    orbFolder.addColor(settings, 'rim').name('rim colour').onChange((v) => orbUniforms.uRimColor.value.set(v));
+
+    waterFolder.close();
+    orbFolder.close();
+    if (innerWidth < 700) gui.close();
+
+    function onResize() {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+    }
+    addEventListener('resize', onResize);
+
+    const timer = new THREE.Timer();
+
+    renderer.setAnimationLoop((time) => {
+      timer.update(time);
+      uniforms.uTime.value += timer.getDelta() * settings.speed;
+      const t = uniforms.uTime.value;
+
+      // Ripples fade out over about two seconds after the pointer stops
+      const idle = (performance.now() - lastMove) / 1000;
+      uniforms.uRipple.value = settings.ripples * Math.exp(-idle * 1.5);
+
+      // The orb floats and turns slowly
+      orb.position.y = 1.15 + Math.sin(t * 0.9) * 0.12;
+      orb.rotation.y = t * 0.15;
+
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>
