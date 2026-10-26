@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 420" width="880" height="420" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs>
+    <linearGradient id="u" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#f00"/></linearGradient>
+    <linearGradient id="v" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#0f0"/></linearGradient>
+    <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse" x="520" y="96">
+      <rect width="30" height="30" fill="#1b2030"/><path d="M0 0H30M0 0V30" stroke="#7cf5d4" stroke-width="3"/>
+    </pattern>
+  </defs>
+  <rect width="880" height="420" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">UV SPACE: A 0 TO 1 ADDRESS FOR EVERY POINT ON A SURFACE</text>
+
+  <!-- left: uv as colour -->
+  <rect x="100" y="96" width="240" height="240" fill="url(#u)"/>
+  <rect x="100" y="96" width="240" height="240" fill="url(#v)" style="mix-blend-mode:screen"/>
+  <rect x="100" y="96" width="240" height="240" fill="none" stroke="#e7eaf0" stroke-width="1.5"/>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12" fill="#e7eaf0">
+    <text x="68" y="356">(0, 0)</text><text x="320" y="356">(1, 0)</text><text x="68" y="88">(0, 1)</text><text x="320" y="88">(1, 1)</text>
+  </g>
+  <path d="M100 372H340" stroke="#ff7a85" stroke-width="2"/><text x="220" y="392" fill="#ff7a85" font-size="13" font-weight="600" text-anchor="middle">u → red</text>
+  <path d="M60 336V96" stroke="#7cf5d4" stroke-width="2"/><text x="48" y="220" fill="#7cf5d4" font-size="13" font-weight="600" text-anchor="middle" transform="rotate(-90 48 220)">v → green</text>
+  <text x="380" y="190" fill="#e7eaf0" font-size="13" font-family="ui-monospace,Menlo,Consolas,monospace">gl_FragColor =</text>
+  <text x="380" y="210" fill="#e7eaf0" font-size="13" font-family="ui-monospace,Menlo,Consolas,monospace">vec4(vUv, 0.0, 1.0);</text>
+
+  <!-- right: fract grid -->
+  <rect x="580" y="96" width="240" height="240" fill="url(#grid)"/>
+  <rect x="580" y="96" width="240" height="240" fill="none" stroke="#e7eaf0" stroke-width="1.5"/>
+  <rect x="580" y="306" width="30" height="30" fill="#f2cc60" fill-opacity=".35" stroke="#f2cc60" stroke-width="2"/>
+  <text x="700" y="372" fill="#9aa3b5" font-size="12" text-anchor="middle">fract(vUv * 8.0) restarts at 0 in every cell;</text>
+  <text x="700" y="390" fill="#9aa3b5" font-size="12" text-anchor="middle">step() draws a line where it is small</text>
+  <text x="616" y="300" fill="#f2cc60" font-size="12">one cell = 0..1 again</text>
+</svg>

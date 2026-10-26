@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 4 · Fragment effects: gradient, noise and a fresnel rim</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel"></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    // ?effect=gradient | noise | rim | both
+    const effects = { gradient: 0, noise: 1, 'fresnel rim': 2, 'noise + rim': 3 };
+    const byParam = { gradient: 'gradient', noise: 'noise', rim: 'fresnel rim', both: 'noise + rim' };
+    const settings = {
+      effect: byParam[new URLSearchParams(location.search).get('effect')] || 'noise + rim',
+      colorA: '#1a1446',
+      colorB: '#ff7a3d',
+      rimColor: '#7cf5d4',
+      speed: 1,
+    };
+    const status = document.getElementById('status');
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(0, 0.4, 4);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    const uniforms = {
+      uTime: { value: 0 },
+      uEffect: { value: effects[settings.effect] },
+      uColorA: { value: new THREE.Color(settings.colorA) },
+      uColorB: { value: new THREE.Color(settings.colorB) },
+      uRimColor: { value: new THREE.Color(settings.rimColor) },
+      uNoiseScale: { value: 2.2 },
+      uRimPower: { value: 2.5 },
+      uRimIntensity: { value: 1.4 },
+    };
+
+    const vertexShader = /* glsl */ `
+      varying vec2 vUv;
+      varying vec3 vPosition;     // object space, for the noise
+      varying vec3 vNormal;       // view space
+      varying vec3 vViewDir;      // view space, from the surface towards the camera
+
+      void main() {
+        vUv = uv;
+        vPosition = position;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        vNormal = normalize(normalMatrix * normal);
+        vViewDir = -mvPosition.xyz;           // the camera sits at (0, 0, 0) in view space
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `;
+
+    const fragmentShader = /* glsl */ `
+      uniform float uTime;
+      uniform int uEffect;
+      uniform vec3 uColorA;
+      uniform vec3 uColorB;
+      uniform vec3 uRimColor;
+      uniform float uNoiseScale;
+      uniform float uRimPower;
+      uniform float uRimIntensity;
+
+      varying vec2 vUv;
+      varying vec3 vPosition;
+      varying vec3 vNormal;
+      varying vec3 vViewDir;
+
+      // Value noise: random numbers on a 3D grid, smoothly blended in between
+      float hash(vec3 p) {
+        p = fract(p * 0.3183099 + 0.1);
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+      }
+
+      float noise(vec3 x) {
+        vec3 i = floor(x);
+        vec3 f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);                // smooth the blend (no visible grid)
+        return mix(
+          mix(mix(hash(i + vec3(0, 0, 0)), hash(i + vec3(1, 0, 0)), f.x),
+              mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+          mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x),
+              mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
+          f.z);
+      }
+
+      // Fractal Brownian motion: the same noise at 5 sizes, each half as strong
+      float fbm(vec3 p) {
+        float value = 0.0;
+        float amplitude = 0.5;
+        for (int i = 0; i < 5; i++) {
+          value += amplitude * noise(p);
+          p *= 2.02;
+          amplitude *= 0.5;
+        }
+        return value;
+      }
+
+      void main() {
+        // 0: a plain gradient along v
+        vec3 color = mix(uColorA, uColorB, vUv.y);
+
+        // 1 and 3: fbm noise, drifting over time
+        if (uEffect == 1 || uEffect == 3) {
+          float n = fbm(vPosition * uNoiseScale + vec3(0.0, uTime * 0.25, uTime * 0.1));
+          color = mix(uColorA, uColorB, smoothstep(0.35, 0.75, n));
+        }
+
+        // 2 and 3: fresnel rim, bright where the surface turns away from the camera
+        if (uEffect >= 2) {
+          vec3 N = normalize(vNormal);        // re-normalize: interpolation shortens vectors
+          vec3 V = normalize(vViewDir);
+          float fresnel = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), uRimPower);
+          if (uEffect == 2) color = uColorA * 0.4;
+          color += uRimColor * fresnel * uRimIntensity;
+        }
+
+        gl_FragColor = vec4(color, 1.0);
+        #include <colorspace_fragment>
+      }
+    `;
+
+    const material = new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader });
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(1.2, 128, 64), material);
+    scene.add(sphere);
+
+    function describe() {
+      status.textContent = `fragment effect: ${settings.effect}\nevery pixel runs the same code with its own vUv, vNormal and vViewDir`;
+    }
+    describe();
+
+    const gui = new GUI({ title: 'Step 4 effects' });
+    gui.add(settings, 'effect', Object.keys(effects)).onChange((v) => { uniforms.uEffect.value = effects[v]; describe(); });
+    gui.add(uniforms.uNoiseScale, 'value', 0.5, 8, 0.1).name('noise scale');
+    gui.add(uniforms.uRimPower, 'value', 0.5, 8, 0.1).name('rim power');
+    gui.add(uniforms.uRimIntensity, 'value', 0, 3, 0.05).name('rim intensity');
+    gui.addColor(settings, 'colorA').onChange((v) => uniforms.uColorA.value.set(v));
+    gui.addColor(settings, 'colorB').onChange((v) => uniforms.uColorB.value.set(v));
+    gui.addColor(settings, 'rimColor').onChange((v) => uniforms.uRimColor.value.set(v));
+    gui.add(settings, 'speed', 0, 3, 0.05);
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    const timer = new THREE.Timer();
+
+    renderer.setAnimationLoop((time) => {
+      timer.update(time);
+      uniforms.uTime.value += timer.getDelta() * settings.speed;
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

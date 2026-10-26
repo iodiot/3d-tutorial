@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 360" width="880" height="360" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs><marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9aa3b5"/></marker></defs>
+  <rect width="880" height="360" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">ONE TSL MATERIAL, TWO SHADING LANGUAGES</text>
+  <rect x="32" y="110" width="240" height="140" rx="12" fill="#1b2030" stroke="#7cf5d4" stroke-width="2"/>
+  <text x="52" y="138" fill="#7cf5d4" font-size="15" font-weight="700">TSL (JavaScript)</text>
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12" fill="#e7eaf0">
+    <text x="52" y="166">material.colorNode =</text><text x="68" y="186">mix(deep, crest, h);</text>
+  </g>
+  <text x="52" y="222" fill="#9aa3b5" font-size="12">a graph of nodes, built</text>
+  <text x="52" y="238" fill="#9aa3b5" font-size="12">once when the material compiles</text>
+  <path d="M272 160L370 110" stroke="#9aa3b5" stroke-width="1.5" marker-end="url(#g)"/>
+  <path d="M272 200L370 250" stroke="#9aa3b5" stroke-width="1.5" marker-end="url(#g)"/>
+  <rect x="376" y="70" width="200" height="80" rx="12" fill="#1b2030" stroke="#c79bff" stroke-width="2"/>
+  <text x="396" y="100" fill="#c79bff" font-size="15" font-weight="700">WGSL</text>
+  <text x="396" y="124" fill="#9aa3b5" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace">fn main() -&gt; vec4f</text>
+  <rect x="376" y="210" width="200" height="80" rx="12" fill="#1b2030" stroke="#f2cc60" stroke-width="2"/>
+  <text x="396" y="240" fill="#f2cc60" font-size="15" font-weight="700">GLSL ES 3.0</text>
+  <text x="396" y="264" fill="#9aa3b5" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace">void main() { … }</text>
+  <path d="M576 110H640" stroke="#9aa3b5" stroke-width="1.5" marker-end="url(#g)"/>
+  <path d="M576 250H640" stroke="#9aa3b5" stroke-width="1.5" marker-end="url(#g)"/>
+  <rect x="646" y="70" width="202" height="80" rx="12" fill="#c79bff" fill-opacity=".1" stroke="#c79bff" stroke-width="1.5"/>
+  <text x="666" y="100" fill="#e7eaf0" font-size="14" font-weight="700">WebGPU backend</text>
+  <text x="666" y="124" fill="#9aa3b5" font-size="12">browsers with WebGPU</text>
+  <rect x="646" y="210" width="202" height="80" rx="12" fill="#f2cc60" fill-opacity=".1" stroke="#f2cc60" stroke-width="1.5"/>
+  <text x="666" y="240" fill="#e7eaf0" font-size="14" font-weight="700">WebGL 2 backend</text>
+  <text x="666" y="264" fill="#9aa3b5" font-size="12">automatic fallback</text>
+  <text x="32" y="330" fill="#6b7386" font-size="12">WebGPURenderer picks the backend at init(). A ShaderMaterial written in GLSL only runs on WebGLRenderer.</text>
+</svg>

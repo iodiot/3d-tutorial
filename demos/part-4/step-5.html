@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 5 · onBeforeCompile: a twist inside MeshStandardMaterial</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel"></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    // ?shadowPatch=0 leaves the shadow untwisted, ?twist=1.2 sets the amount, ?still=1 freezes the animation
+    const params = new URLSearchParams(location.search);
+    const settings = {
+      twist: Number(params.get('twist') || 1.2),
+      animate: params.get('still') !== '1',
+      shadowPatch: params.get('shadowPatch') !== '0',
+    };
+    const status = document.getElementById('status');
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(4.2, 3.2, 5.2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    document.body.appendChild(renderer.domElement);
+
+    // Light from Part 3: a soft room for reflections plus one sun that casts shadows
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.6;
+
+    const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+    sun.position.set(-5, 3.2, -1.5);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    Object.assign(sun.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4, near: 1, far: 16 });
+    sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.02;
+    scene.add(sun);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1.2, 0);
+    controls.enableDamping = true;
+
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(12, 12),
+      new THREE.MeshStandardMaterial({ color: 0x2a3142, roughness: 0.9 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Our uniforms live outside the material, so the main and the shadow material can share them
+    const uniforms = {
+      uTime: { value: 0 },
+      uTwist: { value: settings.twist },
+    };
+
+    // GLSL we add at the top of the vertex shader
+    const twistPars = /* glsl */ `
+      uniform float uTime;
+      uniform float uTwist;
+
+      // Radians to turn a point at height y around the vertical axis
+      float twistAngle(float y) {
+        return uTwist * sin(uTime) * (y - 1.25);
+      }
+
+      mat2 rotate2d(float a) {
+        float s = sin(a), c = cos(a);
+        return mat2(c, s, -s, c);
+      }
+    `;
+
+    function addTwist(shader) {
+      shader.uniforms.uTime = uniforms.uTime;
+      shader.uniforms.uTwist = uniforms.uTwist;
+
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>\n${twistPars}`)
+        // objectNormal is the normal before any transform: turn it with the surface
+        .replace('#include <beginnormal_vertex>', /* glsl */ `
+          #include <beginnormal_vertex>
+          objectNormal.xz = rotate2d(twistAngle(position.y)) * objectNormal.xz;
+        `)
+        // transformed is the position before any transform: turn it too
+        .replace('#include <begin_vertex>', /* glsl */ `
+          #include <begin_vertex>
+          transformed.xz = rotate2d(twistAngle(position.y)) * transformed.xz;
+        `);
+    }
+
+    // A built-in, fully lit material...
+    const material = new THREE.MeshStandardMaterial({ color: 0x3fc8a8, roughness: 0.3, metalness: 0.2 });
+    // ...with our code spliced into its shader right before it compiles
+    material.onBeforeCompile = addTwist;
+
+    // The shadow pass uses a different material. Without the same patch, the shadow stays straight.
+    const depthMaterial = new THREE.MeshDepthMaterial();
+    depthMaterial.onBeforeCompile = addTwist;
+
+    // Geometry from y = 0 to 2.5, with enough height segments to bend smoothly
+    const geometry = new THREE.BoxGeometry(0.9, 2.5, 0.9, 8, 64, 8);
+    geometry.translate(0, 1.25, 0);
+    const tower = new THREE.Mesh(geometry, material);
+    tower.castShadow = true;
+    tower.receiveShadow = true;
+    scene.add(tower);
+
+    function applyShadowPatch() {
+      tower.customDepthMaterial = settings.shadowPatch ? depthMaterial : undefined;
+      status.textContent = `MeshStandardMaterial + onBeforeCompile (twist)\nshadow: ${settings.shadowPatch ? 'customDepthMaterial with the same patch' : 'default depth material, so the shadow does not twist'}`;
+    }
+    applyShadowPatch();
+
+    const gui = new GUI({ title: 'Step 5 onBeforeCompile' });
+    gui.add(uniforms.uTwist, 'value', 0, 2, 0.01).name('twist');
+    gui.add(settings, 'animate');
+    gui.add(settings, 'shadowPatch').name('patch shadow too').onChange(applyShadowPatch);
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    const timer = new THREE.Timer();
+    uniforms.uTime.value = Math.PI / 2;   // start fully twisted
+
+    renderer.setAnimationLoop((time) => {
+      timer.update(time);
+      if (settings.animate) uniforms.uTime.value += timer.getDelta();
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

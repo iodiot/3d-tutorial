@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 2 · Uniforms: time, mouse and colour</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel"></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    // ?mouse=0.7,0.6 starts with the "mouse" at that UV, which is handy for screenshots
+    const params = new URLSearchParams(location.search);
+    const startMouse = (params.get('mouse') || '0.5,0.5').split(',').map(Number);
+    const status = document.getElementById('status');
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(0, 0, 4.2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Uniforms: values that are the same for every vertex and pixel of one draw call.
+    // Change .value from JavaScript at any time; no recompiling needed.
+    const uniforms = {
+      uTime: { value: 0 },
+      uColorA: { value: new THREE.Color('#ff3d7f') },
+      uColorB: { value: new THREE.Color('#3d7bff') },
+      uMouse: { value: new THREE.Vector2(startMouse[0], startMouse[1]) },
+      uGlow: { value: 0.35 },
+      uAspect: { value: 3.2 / 2 },   // width / height of the plane
+    };
+
+    const vertexShader = /* glsl */ `
+      varying vec2 vUv;
+
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    const fragmentShader = /* glsl */ `
+      uniform float uTime;
+      uniform vec3 uColorA;
+      uniform vec3 uColorB;
+      uniform vec2 uMouse;
+      uniform float uGlow;
+      uniform float uAspect;
+      varying vec2 vUv;
+
+      void main() {
+        // A gradient from bottom to top, with a slow wave running along it
+        float wave = 0.08 * sin(vUv.x * 6.2831 * 1.5 + uTime * 2.0);
+        float t = smoothstep(0.0, 1.0, vUv.y + wave);
+        vec3 color = mix(uColorA, uColorB, t);
+
+        // A soft spot of light around the mouse, measured in UV space.
+        // UVs go 0..1 on both sides of a 3.2 x 2 plane, so stretch x to keep the spot round.
+        float d = length((vUv - uMouse) * vec2(uAspect, 1.0));
+        color += vec3(1.0) * uGlow * smoothstep(0.35, 0.0, d);
+
+        gl_FragColor = vec4(color, 1.0);
+        #include <colorspace_fragment>
+      }
+    `;
+
+    const material = new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader });
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 2), material);
+    scene.add(plane);
+
+    // Mouse -> UV: the raycaster tells us exactly which uv the pointer is over
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    renderer.domElement.addEventListener('pointermove', (event) => {
+      pointer.set(event.clientX / innerWidth * 2 - 1, -(event.clientY / innerHeight) * 2 + 1);
+      raycaster.setFromCamera(pointer, camera);
+      const hit = raycaster.intersectObject(plane)[0];
+      if (hit) uniforms.uMouse.value.copy(hit.uv);
+    });
+
+    const settings = { colorA: '#ff3d7f', colorB: '#3d7bff', speed: 1 };
+    const gui = new GUI({ title: 'Step 2 uniforms' });
+    gui.addColor(settings, 'colorA').onChange((v) => uniforms.uColorA.value.set(v));
+    gui.addColor(settings, 'colorB').onChange((v) => uniforms.uColorB.value.set(v));
+    gui.add(uniforms.uGlow, 'value', 0, 1, 0.01).name('glow');
+    gui.add(settings, 'speed', 0, 3, 0.05);
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    const timer = new THREE.Timer();
+
+    renderer.setAnimationLoop((time) => {
+      timer.update(time);
+      uniforms.uTime.value += timer.getDelta() * settings.speed;
+      const m = uniforms.uMouse.value;
+      status.textContent = `uTime  ${uniforms.uTime.value.toFixed(2)}\nuMouse ${m.x.toFixed(2)}, ${m.y.toFixed(2)}  (move the pointer over the plane)`;
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

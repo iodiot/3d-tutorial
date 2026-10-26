@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 1 · Your first ShaderMaterial: UVs as colour</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel"></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    // ?view=solid | uv | grid picks what the fragment shader outputs
+    const views = { 'solid colour': 0, 'UV as colour': 1, 'UV grid': 2 };
+    const byParam = { solid: 'solid colour', uv: 'UV as colour', grid: 'UV grid' };
+    const settings = { view: byParam[new URLSearchParams(location.search).get('view')] || 'UV as colour' };
+    const status = document.getElementById('status');
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(0, 1.2, 7);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // The vertex shader runs once per vertex. It must write gl_Position (clip space).
+    // position, uv, projectionMatrix and modelViewMatrix are declared for us by ShaderMaterial.
+    const vertexShader = /* glsl */ `
+      varying vec2 vUv;
+
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    // The fragment shader runs once per pixel the triangle covers. It must write a colour.
+    const fragmentShader = /* glsl */ `
+      uniform int uView;
+      varying vec2 vUv;
+
+      void main() {
+        vec3 color = vec3(1.0, 0.5, 0.2);              // solid orange
+
+        if (uView == 1) {
+          color = vec3(vUv, 0.0);                      // u -> red, v -> green
+        } else if (uView == 2) {
+          vec2 cell = fract(vUv * 8.0);                // 8 x 8 cells across the UV square
+          float line = step(cell.x, 0.06) + step(cell.y, 0.06);
+          color = mix(vec3(vUv, 0.0) * 0.8, vec3(1.0), min(line, 1.0));
+        }
+
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `;
+
+    const material = new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader,
+      uniforms: { uView: { value: views[settings.view] } },
+    });
+
+    // One material, three geometries: each one has its own uv attribute
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+    plane.position.x = -2.6;
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(1.05, 64, 32), material);
+    const knot = new THREE.Mesh(new THREE.TorusKnotGeometry(0.7, 0.26, 200, 32), material);
+    knot.position.x = 2.6;
+    scene.add(plane, sphere, knot);
+
+    function describe() {
+      status.textContent = `ShaderMaterial · view: ${settings.view}\nleft: PlaneGeometry · centre: SphereGeometry · right: TorusKnotGeometry`;
+    }
+    describe();
+
+    const gui = new GUI({ title: 'Step 1' });
+    gui.add(settings, 'view', Object.keys(views)).onChange((v) => {
+      material.uniforms.uView.value = views[v];
+      describe();
+    });
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    renderer.setAnimationLoop(() => {
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

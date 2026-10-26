@@ -1,0 +1,913 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Three.js from Scratch, Part 4: Your First Shaders — Mike Smahin</title>
+<meta name="description" content="Write your own GPU code with ShaderMaterial: vertex and fragment shaders, uniforms, varyings and UVs, animated vertex waves, gradients, noise and a fresnel rim, patching a lit material with onBeforeCompile, and how GLSL, WGSL and TSL fit together. With diagrams, screenshots and a live demo.">
+<link rel="canonical" href="https://iodiot.github.io/3d-tutorial/part-4-shaders/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Three.js from Scratch, Part 4: Your First Shaders — Mike Smahin">
+<meta property="og:description" content="Write your own GPU code with ShaderMaterial: vertex and fragment shaders, uniforms, varyings and UVs, animated vertex waves, gradients, noise and a fresnel rim, patching a lit material with onBeforeCompile, and how GLSL, WGSL and TSL fit together. With diagrams, screenshots and a live demo.">
+<meta property="og:url" content="https://iodiot.github.io/3d-tutorial/part-4-shaders/">
+<meta property="og:image" content="https://iodiot.github.io/3d-tutorial/images/part-4/social-card.png">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d12'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' text-anchor='middle' fill='%237cf5d4'%3E3D%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/3d-tutorial/assets/style.css?v=2">
+</head>
+<body>
+<div class="bg"></div>
+<header class="nav">
+  <a class="brand" href="/">Mike Smahin</a>
+  <nav>
+    <a href="/3d-tutorial/">3D Tutorial</a>
+    <a href="/blog/">Blog</a>
+    <a href="/">Portfolio</a>
+  </nav>
+</header>
+<main>
+<article class="post">
+  <header class="post-head">
+    <p class="eyebrow"><a href="/3d-tutorial/">← Three.js from Scratch · all parts</a></p>
+    <h1>Three.js from Scratch, Part 4: Your First Shaders</h1>
+    <p class="meta-line"><time datetime="2026-10-26">Oct 26, 2026</time> · Mike Smahin</p>
+    <ul class="tags"><li class="topic">part 4</li><li>three.js</li><li>shaders</li><li>glsl</li><li>webgpu</li></ul>
+  </header>
+  <div class="prose"><p>In <a href="/3d-tutorial/part-3-models-shadows-environment/">Part 3</a> we loaded a model, lit it with an HDR sky and gave it a proper shadow. Every surface in that scene was drawn by a material Three.js wrote for us: <code>MeshStandardMaterial</code> worked out the light, the reflections and the shadow, and we only set a few numbers. That gets you a long way. But sooner or later you want something no built-in material does: water that moves, a surface that glows at the edges, a shape that bends, a colour that follows the mouse. For that you write a <strong>shader</strong>: a small program that runs on the GPU, once for every vertex and once for every pixel.</p>
+<p>Shaders have a reputation for being hard, mostly because the first contact is a wall of strange code. They are much less scary once you know the handful of rules they follow. In this article we write our first ones from zero, with <code>ShaderMaterial</code> and GLSL. We start with a single flat colour and end with the scene below: an ocean whose waves are computed entirely on the GPU, ripples that follow your pointer, and a glowing noise orb. Every slider in the panel changes one number inside a shader:</p>
+<div class="demo">
+  <iframe src="/3d-tutorial/demos/part-4/" title="Live demo: a dark ocean with moving waves computed in a vertex shader, sun glints and fog, ripples that spread from the mouse pointer, and an orange glowing noise orb with a cyan rim floating above the water, with a panel of shader controls" loading="lazy"></iframe>
+</div>
+<p class="demo-links"><a href="/3d-tutorial/demos/part-4/" target="_blank" rel="noopener">Open the demo full screen ↗</a> · <a href="https://github.com/iodiot/3d-tutorial/tree/main/demos/part-4" target="_blank" rel="noopener">Source on GitHub ↗</a></p>
+<blockquote>
+<p>As in the earlier parts, everything here uses Three.js <strong>r186</strong> (npm version <code>0.186.1</code>) through the same import map. Every step below is a single HTML file you can open from the repo. Unlike Part 3, nothing loads from disk: all the &quot;art&quot; is code, so the files also work straight from <code>file://</code>. The last step is the exception that previews Part 5: it uses <code>WebGPURenderer</code>, which needs the <code>three/webgpu</code> build.</p>
+</blockquote>
+<h2>What a shader is</h2>
+<p>Your GPU has thousands of small cores. They are not clever, but they are many, and they all run the <strong>same</strong> program at the same time on different data. A shader is that program. When Three.js draws a mesh, it does not hand the GPU &quot;a sphere&quot;. It hands over a list of vertices, two shaders, and a few values to go with them, and says: draw.</p>
+<p>What happens next is called the <strong>pipeline</strong>:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-4/shader-pipeline.svg" alt="Diagram of the pipeline for one draw call, left to right. Geometry, with the per-vertex attributes position, normal and uv, goes into the vertex shader, which runs once per vertex, moves the point and writes gl_Position. Then the rasterizer, fixed hardware rather than code, turns each triangle into the pixels it covers. Then the fragment shader runs once per pixel and writes a colour to gl_FragColor. Then the screen, with the depth test and blending. A bar above feeds uniforms, the same value for every vertex and pixel, into both shaders. A dashed line below carries varyings from the vertex shader to the fragment shader: written per vertex, blended across the triangle, read per pixel." width="880" height="400" loading="lazy">
+</figure>
+<ol>
+<li>The <strong>vertex shader</strong> runs once for every vertex. It gets that vertex's data (its position, normal, UV: the <strong>attributes</strong> from Part 2) and has one job: say where the vertex ends up on screen, by writing <code>gl_Position</code>. It may also move the vertex anywhere it likes. That is how we will make waves.</li>
+<li>The <strong>rasterizer</strong> is not code you write. It takes each triangle of three transformed vertices and works out which pixels it covers. Each of those candidate pixels is called a <strong>fragment</strong>.</li>
+<li>The <strong>fragment shader</strong> runs once for every fragment and decides its colour, by writing <code>gl_FragColor</code>. Lighting, textures, fog, everything you see as &quot;the material&quot; happens here.</li>
+</ol>
+<p>Two kinds of data flow into this:</p>
+<ul>
+<li><strong>Uniforms</strong> come from JavaScript and have the same value for every vertex and every pixel of a draw call: the time, the mouse position, a colour, the camera matrices.</li>
+<li><strong>Varyings</strong> are how the vertex shader talks to the fragment shader. The vertex shader writes a value at each corner; the rasterizer blends the three corner values across the triangle; each fragment reads its own blended value.</li>
+</ul>
+<p>That is the whole model. Every built-in material in Three.js, including the <code>MeshStandardMaterial</code> from Part 3, is a vertex shader and a fragment shader built from exactly these parts. Three.js just writes them for you.</p>
+<p>The language is <strong>GLSL</strong> (OpenGL Shading Language), more precisely GLSL ES 3.0, the version WebGL 2 uses. It looks like C: typed variables, functions, <code>if</code> and <code>for</code>. What makes it pleasant for graphics is its vector types (<code>vec2</code>, <code>vec3</code>, <code>vec4</code>, <code>mat3</code>, <code>mat4</code>) and a big library of maths functions that work on whole vectors at once.</p>
+<h2>ShaderMaterial: your first shader</h2>
+<p><code>ShaderMaterial</code> is a material whose shaders you write yourself. Here is the smallest useful one:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">ShaderMaterial</span>({
+  <span class="hljs-attr">vertexShader</span>: <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+    varying vec2 vUv;
+
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `</span>,
+  <span class="hljs-attr">fragmentShader</span>: <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+    varying vec2 vUv;
+
+    void main() {
+      gl_FragColor = vec4(1.0, 0.5, 0.2, 1.0);   // red, green, blue, alpha: orange
+    }
+  `</span>,
+});
+
+<span class="hljs-keyword">const</span> mesh = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">SphereGeometry</span>(<span class="hljs-number">1</span>, <span class="hljs-number">64</span>, <span class="hljs-number">32</span>), material);
+</code></pre>
+<p>The shaders are plain strings. The <code>/* glsl */</code> comment does nothing at runtime; editor extensions such as <em>Comment tagged templates</em> or <em>glsl-literal</em> in VS Code use it to highlight the string as GLSL, which helps a lot.</p>
+<p>Read the vertex shader from the inside out. <code>position</code> is the vertex in the model's own space, the same numbers you saw in <code>geometry.attributes.position</code> in Part 2. <code>vec4(position, 1.0)</code> adds a fourth component, <code>w</code>, which is <code>1.0</code> for points (it is what lets a 4×4 matrix move a point as well as rotate and scale it). <code>modelViewMatrix</code> moves the point into the camera's space, and <code>projectionMatrix</code> flattens it onto the screen. The result goes into <code>gl_Position</code>, and the GPU takes it from there. This one line is what every Three.js material does to every vertex; the rest is extras.</p>
+<p>Where do <code>position</code>, <code>uv</code>, <code>modelViewMatrix</code> and <code>projectionMatrix</code> come from? We never declared them. <code>ShaderMaterial</code> adds a block of declarations to the top of your code before compiling it. The ones you will use most:</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Kind</th>
+<th>Stage</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>position</code>, <code>normal</code>, <code>uv</code></td>
+<td>attribute</td>
+<td>vertex</td>
+<td>the geometry's data for this vertex</td>
+</tr>
+<tr>
+<td><code>modelMatrix</code></td>
+<td>uniform</td>
+<td>vertex</td>
+<td>object space → world space</td>
+</tr>
+<tr>
+<td><code>viewMatrix</code></td>
+<td>uniform</td>
+<td>both</td>
+<td>world space → camera space</td>
+</tr>
+<tr>
+<td><code>modelViewMatrix</code></td>
+<td>uniform</td>
+<td>vertex</td>
+<td><code>viewMatrix * modelMatrix</code>, precomputed</td>
+</tr>
+<tr>
+<td><code>projectionMatrix</code></td>
+<td>uniform</td>
+<td>vertex</td>
+<td>camera space → clip space</td>
+</tr>
+<tr>
+<td><code>normalMatrix</code></td>
+<td>uniform</td>
+<td>vertex</td>
+<td>turns normals into camera space</td>
+</tr>
+<tr>
+<td><code>cameraPosition</code></td>
+<td>uniform</td>
+<td>both</td>
+<td>the camera, in world space</td>
+</tr>
+</tbody>
+</table>
+<p>If you want none of that help, there is <code>RawShaderMaterial</code>: it compiles your strings exactly as they are, so you declare every attribute and uniform yourself, plus <code>precision</code> and the GLSL version. It is useful when porting shaders from elsewhere, or to see what is really going on. For everyday work <code>ShaderMaterial</code> is the right tool.</p>
+<p>A note on versions: WebGL 2 speaks GLSL ES 3.0, where <code>varying</code> is spelled <code>out</code> and <code>in</code>, and <code>gl_FragColor</code> was replaced by an output you declare yourself. Three.js adds <code>#define</code>s that translate the older names, so the classic <code>varying</code> and <code>gl_FragColor</code> you will find in most tutorials work as they are. That is what we use here.</p>
+<h3>GLSL in five minutes</h3>
+<p>If you know JavaScript, the surprises in GLSL are few but sharp:</p>
+<ul>
+<li><strong>Types are strict.</strong> <code>float x = 1;</code> is a compile error: <code>1</code> is an <code>int</code>, and GLSL does not convert for you. Write <code>1.0</code>. This is the error everybody hits first.</li>
+<li><strong>Vectors and swizzles.</strong> <code>vec3 c = vec3(1.0, 0.5, 0.2);</code> then <code>c.r</code>, <code>c.xy</code>, <code>c.zyx</code>, even <code>c.rrr</code> all work. <code>.xyzw</code>, <code>.rgba</code> and <code>.stpq</code> are the same components with different names.</li>
+<li><strong>Maths works on whole vectors.</strong> <code>a + b</code>, <code>a * 2.0</code>, <code>sin(v)</code> apply to every component. <code>mat4 * vec4</code> is a real matrix multiplication.</li>
+<li><strong>The built-in functions are your toolbox:</strong> <code>mix(a, b, t)</code> blends, <code>clamp(x, lo, hi)</code> limits, <code>step(edge, x)</code> is 0 or 1, <code>smoothstep(e0, e1, x)</code> is a soft step, <code>fract(x)</code> keeps what is after the decimal point, <code>length</code>, <code>distance</code>, <code>dot</code>, <code>cross</code>, <code>normalize</code>, <code>pow</code>, <code>sin</code>, <code>cos</code>.</li>
+<li><strong>No <code>console.log</code>.</strong> A shader cannot print. You debug by turning a value into a colour and looking at it, which we will do all the time.</li>
+</ul>
+<h2>UVs: an address for every point</h2>
+<p>The orange sphere is not very exciting, so let us use the varying. In the vertex shader we copied each vertex's <code>uv</code> attribute into <code>vUv</code>. In the fragment shader we can now show it:</p>
+<pre class="hljs"><code class="language-glsl"><span class="hljs-keyword">varying</span> <span class="hljs-type">vec2</span> vUv;
+
+<span class="hljs-type">void</span> main() {
+  <span class="hljs-built_in">gl_FragColor</span> = <span class="hljs-type">vec4</span>(vUv, <span class="hljs-number">0.0</span>, <span class="hljs-number">1.0</span>);   <span class="hljs-comment">// u -&gt; red, v -&gt; green</span>
+}
+</code></pre>
+<p>Remember UVs from Part 2: every vertex carries a 2D coordinate that says which point of a texture belongs to it, from <code>(0, 0)</code> at the bottom left to <code>(1, 1)</code> at the top right. Output them as a colour and you see that address directly: black where both are 0, red where <code>u</code> is 1, green where <code>v</code> is 1, yellow where both are.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-4/uv-space.svg" alt="Diagram. Left: the UV square from (0, 0) at the bottom left to (1, 1) at the top right, filled with a gradient: black at the bottom left, red along the bottom right, green at the top left, yellow at the top right. Arrows say u goes to red and v goes to green, with the code gl_FragColor = vec4(vUv, 0.0, 1.0). Right: an 8 by 8 grid of cyan lines; one cell is highlighted with the note one cell = 0..1 again. Text: fract(vUv * 8.0) restarts at 0 in every cell; step() draws a line where it is small." width="880" height="420" loading="lazy">
+</figure>
+<p>Here it is on three geometries with one material. The plane shows the square exactly. The sphere wraps it around like a world map, <code>u</code> around the equator and <code>v</code> from pole to pole. The torus knot runs <code>u</code> along the tube and <code>v</code> around it:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-4/step-1-uv.webp" alt="Screenshot: a flat square, a sphere and a torus knot side by side on a dark background, all coloured by their UVs: black to red from left to right, black to green from bottom to top. The sphere shows the colours wrapped around it; the knot shows them repeating along its tube." width="960" height="600" loading="lazy">
+  <figcaption>Step 1: one <code>ShaderMaterial</code>, three geometries, UVs as colour. (<a href="/3d-tutorial/demos/part-4/step-1.html" target="_blank" rel="noopener">step-1.html</a>)</figcaption>
+</figure>
+<p>Now the first real pattern. Multiply the UVs by 8 and keep only the fractional part: <code>fract(vUv * 8.0)</code> goes 0 → 1 eight times across the surface, so every cell gets its own little 0..1 square. Where that local value is small we are near a cell edge, and <code>step</code> turns that into a hard 1 or 0:</p>
+<pre class="hljs"><code class="language-glsl"><span class="hljs-type">vec2</span> cell = <span class="hljs-built_in">fract</span>(vUv * <span class="hljs-number">8.0</span>);                        <span class="hljs-comment">// 8 x 8 cells</span>
+<span class="hljs-type">float</span> line = <span class="hljs-built_in">step</span>(cell.x, <span class="hljs-number">0.06</span>) + <span class="hljs-built_in">step</span>(cell.y, <span class="hljs-number">0.06</span>);  <span class="hljs-comment">// 1 near a cell edge</span>
+<span class="hljs-type">vec3</span> color = <span class="hljs-built_in">mix</span>(<span class="hljs-type">vec3</span>(vUv, <span class="hljs-number">0.0</span>) * <span class="hljs-number">0.8</span>, <span class="hljs-type">vec3</span>(<span class="hljs-number">1.0</span>), <span class="hljs-built_in">min</span>(line, <span class="hljs-number">1.0</span>));
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-4/step-1-grid.webp" alt="Screenshot: the same three shapes with a white grid of 8 by 8 cells drawn over the UV colours. On the plane the cells are square; on the sphere they become a latitude and longitude grid that bunches up at the poles; on the knot they follow the tube." width="960" height="600" loading="lazy">
+  <figcaption>Step 1 with <code>?view=grid</code>: a UV grid from <code>fract</code> and <code>step</code>. It is also the best way to see how a model's UVs are laid out. (<a href="/3d-tutorial/demos/part-4/step-1.html?view=grid" target="_blank" rel="noopener">step-1.html?view=grid</a>)</figcaption>
+</figure>
+<p>This is the core trick of procedural patterns: <strong>compute something from coordinates, then shape it with <code>fract</code>, <code>step</code>, <code>smoothstep</code> and <code>mix</code></strong>. No texture, no image files: the pattern is maths, so it is perfectly sharp at any zoom. The grid view is also a debugging tool. Bunched-up cells at the sphere's poles, or stretched cells on a model, show exactly where a texture would distort.</p>
+<h2>Uniforms: time, mouse and colour</h2>
+<p>A shader that never changes is a picture. To animate it, we pass values in from JavaScript with <strong>uniforms</strong>. You declare them in GLSL with the <code>uniform</code> keyword, and give them a starting value in the material's <code>uniforms</code> object, keyed by the same name:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> uniforms = {
+  <span class="hljs-attr">uTime</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">0</span> },
+  <span class="hljs-attr">uColorA</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#ff3d7f&#x27;</span>) },
+  <span class="hljs-attr">uColorB</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#3d7bff&#x27;</span>) },
+  <span class="hljs-attr">uMouse</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector2</span>(<span class="hljs-number">0.5</span>, <span class="hljs-number">0.5</span>) },
+  <span class="hljs-attr">uGlow</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">0.35</span> },
+  <span class="hljs-attr">uAspect</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">3.2</span> / <span class="hljs-number">2</span> },   <span class="hljs-comment">// width / height of the plane</span>
+};
+
+<span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">ShaderMaterial</span>({ uniforms, vertexShader, fragmentShader });
+</code></pre>
+<pre class="hljs"><code class="language-glsl"><span class="hljs-keyword">uniform</span> <span class="hljs-type">float</span> uTime;
+<span class="hljs-keyword">uniform</span> <span class="hljs-type">vec3</span> uColorA;
+<span class="hljs-keyword">uniform</span> <span class="hljs-type">vec3</span> uColorB;
+<span class="hljs-keyword">uniform</span> <span class="hljs-type">vec2</span> uMouse;
+<span class="hljs-keyword">uniform</span> <span class="hljs-type">float</span> uGlow;
+<span class="hljs-keyword">uniform</span> <span class="hljs-type">float</span> uAspect;
+<span class="hljs-keyword">varying</span> <span class="hljs-type">vec2</span> vUv;
+
+<span class="hljs-type">void</span> main() {
+  <span class="hljs-comment">// A gradient from bottom to top, with a slow wave running along it</span>
+  <span class="hljs-type">float</span> wave = <span class="hljs-number">0.08</span> * <span class="hljs-built_in">sin</span>(vUv.x * <span class="hljs-number">6.2831</span> * <span class="hljs-number">1.5</span> + uTime * <span class="hljs-number">2.0</span>);
+  <span class="hljs-type">float</span> t = <span class="hljs-built_in">smoothstep</span>(<span class="hljs-number">0.0</span>, <span class="hljs-number">1.0</span>, vUv.y + wave);
+  <span class="hljs-type">vec3</span> color = <span class="hljs-built_in">mix</span>(uColorA, uColorB, t);
+
+  <span class="hljs-comment">// A soft spot of light around the mouse, measured in UV space</span>
+  <span class="hljs-type">float</span> d = <span class="hljs-built_in">length</span>((vUv - uMouse) * <span class="hljs-type">vec2</span>(uAspect, <span class="hljs-number">1.0</span>));
+  color += <span class="hljs-type">vec3</span>(<span class="hljs-number">1.0</span>) * uGlow * <span class="hljs-built_in">smoothstep</span>(<span class="hljs-number">0.35</span>, <span class="hljs-number">0.0</span>, d);
+
+  <span class="hljs-built_in">gl_FragColor</span> = <span class="hljs-type">vec4</span>(color, <span class="hljs-number">1.0</span>);
+  <span class="hljs-meta">#include &lt;colorspace_fragment&gt;</span>
+}
+</code></pre>
+<p>Three.js maps JavaScript types to GLSL types for you: a number becomes a <code>float</code> (or <code>int</code>, if the GLSL says so), <code>Vector2/3/4</code> become <code>vec2/3/4</code>, <code>Color</code> becomes <code>vec3</code>, <code>Matrix4</code> becomes <code>mat4</code>, and a <code>Texture</code> becomes a <code>sampler2D</code>. The <code>{ value: ... }</code> wrapper is not decoration. The renderer keeps a reference to that object and reads <code>.value</code> every frame, so changing a uniform is just an assignment, with no recompiling:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> timer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Timer</span>();
+
+renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">time</span>) =&gt;</span> {
+  timer.<span class="hljs-title function_">update</span>(time);
+  uniforms.<span class="hljs-property">uTime</span>.<span class="hljs-property">value</span> += timer.<span class="hljs-title function_">getDelta</span>();   <span class="hljs-comment">// seconds, so speed is the same on every screen</span>
+  renderer.<span class="hljs-title function_">render</span>(scene, camera);
+});
+</code></pre>
+<p>Adding the delta instead of using the absolute time makes it easy to add a speed slider later: multiply the delta. (<code>Timer</code> is the replacement for <code>Clock</code> we met in Part 2.)</p>
+<p>For the mouse, we want to know which point of the <em>surface</em> the pointer is over, not which pixel of the screen. Three.js's <code>Raycaster</code> gives us that for free. It shoots a ray from the camera through the pointer and reports what it hits, and each hit has a <code>uv</code> field, the interpolated UV at the exact point it touched.</p>
+<pre class="hljs"><code class="language-js">renderer.<span class="hljs-property">domElement</span>.<span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;pointermove&#x27;</span>, <span class="hljs-function">(<span class="hljs-params">event</span>) =&gt;</span> {
+  pointer.<span class="hljs-title function_">set</span>(event.<span class="hljs-property">clientX</span> / innerWidth * <span class="hljs-number">2</span> - <span class="hljs-number">1</span>, -(event.<span class="hljs-property">clientY</span> / innerHeight) * <span class="hljs-number">2</span> + <span class="hljs-number">1</span>);
+  raycaster.<span class="hljs-title function_">setFromCamera</span>(pointer, camera);
+  <span class="hljs-keyword">const</span> hit = raycaster.<span class="hljs-title function_">intersectObject</span>(plane)[<span class="hljs-number">0</span>];
+  <span class="hljs-keyword">if</span> (hit) uniforms.<span class="hljs-property">uMouse</span>.<span class="hljs-property">value</span>.<span class="hljs-title function_">copy</span>(hit.<span class="hljs-property">uv</span>);
+});
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-4/step-2-uniforms.webp" alt="Screenshot: a rectangle filled with a gradient from pink at the bottom to blue at the top, with a gentle wave in the boundary and a soft round white glow near the upper right where the mouse is. A panel shows uTime and uMouse values, and a control panel has two colour pickers, a glow slider and a speed slider." width="960" height="600" loading="lazy">
+  <figcaption>Step 2: <code>uTime</code> moves the wave, <code>uMouse</code> places the glow, and the two colours come from the panel. (<a href="/3d-tutorial/demos/part-4/step-2.html" target="_blank" rel="noopener">step-2.html</a>)</figcaption>
+</figure>
+<p>Two details in that shader are worth a closer look.</p>
+<p><strong>Why <code>uAspect</code>?</strong> UVs always run from 0 to 1, but this plane is 3.2 wide and 2 tall. One unit of <code>u</code> is longer on screen than one unit of <code>v</code>, so a circle measured in UV space comes out as a wide ellipse. Multiplying the x difference by the aspect ratio before taking the <code>length</code> puts both axes back in the same units. You will meet this in every full-screen effect: screen coordinates have the same problem.</p>
+<p><strong>Why <code>#include &lt;colorspace_fragment&gt;</code>?</strong> Part 2 explained that Three.js works in linear colour internally and converts to sRGB at the end. A <code>THREE.Color('#ff3d7f')</code> is converted to linear when you create it, and the built-in materials convert their result back to sRGB in their last line. Our own shader has to do that too, or every colour comes out darker and more saturated than the hex code you picked. <code>#include &lt;colorspace_fragment&gt;</code> is Three.js's own snippet for that last step, and it pastes in the right conversion for the renderer's output colour space. Put it after you write <code>gl_FragColor</code>. Its sibling, <code>#include &lt;tonemapping_fragment&gt;</code>, applies the renderer's tone mapping from Part 3 if one is set; the final demo uses both.</p>
+<p><code>#include &lt;name&gt;</code> is not standard GLSL. It is Three.js's own mechanism: before compiling, it replaces every <code>#include</code> with a chunk from <code>THREE.ShaderChunk</code>. Every built-in material is assembled this way, from a few hundred small chunks. Keep that in mind; we will use it to modify a built-in material later.</p>
+<h2>Varyings: from vertices to pixels</h2>
+<p>We have already used one varying, <code>vUv</code>, without thinking much about it. It is worth stopping on, because varyings are where most of the magic between the two shaders happens.</p>
+<p>The vertex shader runs only at the corners of each triangle. The fragment shader runs for every pixel in between. So what value does a pixel in the middle of a triangle get? The rasterizer <strong>interpolates</strong>: each fragment receives a weighted mix of the three corner values, weighted by how close it is to each corner.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-4/uniforms-varyings.svg" alt="Diagram. A JavaScript box at the top sets material.uniforms.uTime.value and uColor once per frame; arrows send uniform float uTime into the vertex shader and uniform vec3 uColor into the fragment shader. The vertex shader box runs three times, once per corner, and writes vUv = uv: corner A gets (0, 0), B gets (1, 0), C gets (0.5, 1). In the middle, a triangle shaded from pink at A to blue at B and cyan at C shows the rasterizer blending. A marked point inside gets a weighted mix. The fragment shader box, run thousands of times, reads varying vec2 vUv, for example (0.55, 0.27), and writes gl_FragColor = vec4(uColor * vUv.y, 1.0)." width="880" height="420" loading="lazy">
+</figure>
+<p>That is why UV colours came out as smooth gradients even though each triangle only has three UV values. Any value can travel this way: a position, a normal, a height, a random number per vertex. The rules:</p>
+<ul>
+<li>Declare it with the same type and name in both shaders.</li>
+<li>Write it in the vertex shader, read it in the fragment shader. The fragment shader cannot write it back.</li>
+<li>The blend is linear. That is perfect for colours and positions, but a blend of two unit-length normals is shorter than 1. <strong>Always <code>normalize</code> a normal or direction you read from a varying.</strong> Lighting with an un-normalized normal shows up as faint dark bands across each triangle.</li>
+</ul>
+<p>A naming convention you will see everywhere, and in this article: <code>u</code> for uniforms (<code>uTime</code>), <code>v</code> for varyings (<code>vUv</code>), <code>a</code> for custom attributes (<code>aRandom</code>).</p>
+<h2>Vertex displacement: making waves</h2>
+<p>So far the vertex shader has only passed things along. Now let us make it move the vertices. The idea: start with a flat plane with many vertices, and push each one up by a height computed from its position and the time.</p>
+<pre class="hljs"><code class="language-glsl"><span class="hljs-keyword">uniform</span> <span class="hljs-type">float</span> uTime;
+<span class="hljs-keyword">uniform</span> <span class="hljs-type">float</span> uAmplitude;
+<span class="hljs-keyword">uniform</span> <span class="hljs-type">float</span> uFrequency;
+<span class="hljs-keyword">varying</span> <span class="hljs-type">float</span> vElevation;
+
+<span class="hljs-comment">// Two sine waves crossing each other. p is a point on the flat plane.</span>
+<span class="hljs-type">float</span> elevation(<span class="hljs-type">vec2</span> p) {
+  <span class="hljs-keyword">return</span> (
+    <span class="hljs-built_in">sin</span>(p.x * uFrequency + uTime) * <span class="hljs-number">0.5</span> +
+    <span class="hljs-built_in">sin</span>(p.y * uFrequency * <span class="hljs-number">0.8</span> + uTime * <span class="hljs-number">1.3</span>) * <span class="hljs-number">0.5</span>
+  ) * uAmplitude;
+}
+
+<span class="hljs-type">void</span> main() {
+  <span class="hljs-type">vec3</span> p = position;          <span class="hljs-comment">// the plane lies in x/y: z is &quot;up&quot; here</span>
+  p.z += elevation(p.xy);
+  vElevation = p.z;           <span class="hljs-comment">// hand the height to the fragment shader</span>
+  <span class="hljs-built_in">gl_Position</span> = projectionMatrix * modelViewMatrix * <span class="hljs-type">vec4</span>(p, <span class="hljs-number">1.0</span>);
+}
+</code></pre>
+<pre class="hljs"><code class="language-glsl"><span class="hljs-keyword">uniform</span> <span class="hljs-type">float</span> uAmplitude;
+<span class="hljs-keyword">uniform</span> <span class="hljs-type">vec3</span> uDeep;
+<span class="hljs-keyword">uniform</span> <span class="hljs-type">vec3</span> uCrest;
+<span class="hljs-keyword">varying</span> <span class="hljs-type">float</span> vElevation;
+
+<span class="hljs-type">void</span> main() {
+  <span class="hljs-type">float</span> h = <span class="hljs-built_in">smoothstep</span>(-uAmplitude, uAmplitude, vElevation);   <span class="hljs-comment">// -amplitude..amplitude -&gt; 0..1</span>
+  <span class="hljs-built_in">gl_FragColor</span> = <span class="hljs-type">vec4</span>(<span class="hljs-built_in">mix</span>(uDeep, uCrest, h), <span class="hljs-number">1.0</span>);
+  <span class="hljs-meta">#include &lt;colorspace_fragment&gt;</span>
+}
+</code></pre>
+<p><code>sin(x * frequency + time)</code> is a wave that slides along x as time grows. Frequency squeezes it, amplitude makes it taller. Adding two waves in different directions and at different speeds gives the crossing pattern you see. The height goes on to the fragment shader as <code>vElevation</code>, so the valleys can be deep blue and the crests cyan. The mesh is a <code>PlaneGeometry</code>, rotated to lie flat on the ground with <code>water.rotation.x = -Math.PI / 2</code>.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-4/step-3-waves.webp" alt="Screenshot: a square patch of water in 3D, bending in smooth hills and valleys, coloured deep blue in the valleys and cyan on the crests, on a dark background. A panel says PlaneGeometry(4, 4, 128, 128), 16,641 vertices, the vertex shader moves every one of them, every frame." width="960" height="600" loading="lazy">
+  <figcaption>Step 3: sine waves computed in the vertex shader, coloured by height in the fragment shader. (<a href="/3d-tutorial/demos/part-4/step-3.html" target="_blank" rel="noopener">step-3.html</a>)</figcaption>
+</figure>
+<p>The vertex shader can only move vertices that exist. That is why the plane is built with 128 × 128 segments, 16,641 vertices. With few segments the waves turn into a few large flat triangles, because the GPU only bends the surface at the vertices and draws straight lines in between:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-4/step-3-wireframe.webp" alt="Screenshot: the same wave patch drawn as a wireframe with only 24 by 24 segments. The waves are visible but angular, made of large straight triangles." width="960" height="600" loading="lazy">
+  <figcaption>Step 3 with <code>?segments=24&amp;wireframe=1</code>: the shader moves vertices, not pixels. Fewer segments, blockier waves. (<a href="/3d-tutorial/demos/part-4/step-3.html?segments=24&amp;wireframe=1" target="_blank" rel="noopener">step-3.html?segments=24&amp;wireframe=1</a>)</figcaption>
+</figure>
+<p>Two things to know about this technique:</p>
+<ul>
+<li><strong>Moving vertices on the GPU is cheap</strong>, far cheaper than changing <code>geometry.attributes.position</code> in JavaScript every frame, because nothing has to be sent from the CPU to the GPU. The geometry is uploaded once; only the <code>uTime</code> uniform changes. That is how the final demo animates 148,000 vertices without effort.</li>
+<li><strong>Three.js does not know.</strong> Raycasting, bounding boxes and frustum culling all use the original, flat geometry. The final demo's ripples follow the pointer's hit on the flat plane, which is close enough. If you displace a mesh far outside its original bounds, set <code>mesh.frustumCulled = false</code> or enlarge <code>geometry.boundingSphere</code>, or it may disappear at the edge of the screen.</li>
+</ul>
+<h3>Normals for a moving surface</h3>
+<p>The waves in step 3 are coloured by height but not lit. To light them, the fragment shader needs a normal, and the geometry's normals all point straight up, because the plane was flat when they were computed. We moved the surface, so we have to compute new normals ourselves.</p>
+<p>There is a simple, general way: sample the height function a tiny step away in x and in y. The two differences are the slopes, and a normal is perpendicular to both slopes:</p>
+<pre class="hljs"><code class="language-glsl"><span class="hljs-type">float</span> e = elevation(p.xy);
+<span class="hljs-type">float</span> eps = <span class="hljs-number">0.01</span>;
+<span class="hljs-type">float</span> ex = elevation(p.xy + <span class="hljs-type">vec2</span>(eps, <span class="hljs-number">0.0</span>));   <span class="hljs-comment">// height a little to the right</span>
+<span class="hljs-type">float</span> ey = elevation(p.xy + <span class="hljs-type">vec2</span>(<span class="hljs-number">0.0</span>, eps));   <span class="hljs-comment">// height a little further &quot;up&quot; the plane</span>
+<span class="hljs-type">vec3</span> objectNormal = <span class="hljs-built_in">normalize</span>(<span class="hljs-type">vec3</span>(-(ex - e) / eps, -(ey - e) / eps, <span class="hljs-number">1.0</span>));
+</code></pre>
+<p>It costs two more calls to <code>elevation</code> per vertex, which the GPU barely notices. This is called <em>finite differences</em>, and it works for any height function you can call, however complicated. The final demo uses it, then lights the water with the normal: a diffuse term, a sky reflection and a sun glint.</p>
+<h2>Fragment effects: gradients, noise and a fresnel rim</h2>
+<p>The fragment shader is where surfaces get their look. Three effects cover a surprising share of what you see in shader demos.</p>
+<p><strong>Gradients</strong> you have already met: <code>mix(colorA, colorB, t)</code>, with <code>t</code> from a UV, a height or a distance, often shaped with <code>smoothstep</code> so the transition starts and ends softly.</p>
+<p><strong>Noise</strong> is how shaders fake natural detail: clouds, marble, fire, terrain. <code>sin</code> is too regular; the eye spots the repetition at once. Noise is smooth randomness. The simplest kind, <em>value noise</em>, puts a pseudo-random number on every corner of a grid and blends smoothly in between:</p>
+<pre class="hljs"><code class="language-glsl"><span class="hljs-comment">// A random-looking number from a 3D point (the same point always gives the same number)</span>
+<span class="hljs-type">float</span> hash(<span class="hljs-type">vec3</span> p) {
+  p = <span class="hljs-built_in">fract</span>(p * <span class="hljs-number">0.3183099</span> + <span class="hljs-number">0.1</span>);
+  p *= <span class="hljs-number">17.0</span>;
+  <span class="hljs-keyword">return</span> <span class="hljs-built_in">fract</span>(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+<span class="hljs-type">float</span> noise(<span class="hljs-type">vec3</span> x) {
+  <span class="hljs-type">vec3</span> i = <span class="hljs-built_in">floor</span>(x);                 <span class="hljs-comment">// which grid cell</span>
+  <span class="hljs-type">vec3</span> f = <span class="hljs-built_in">fract</span>(x);                 <span class="hljs-comment">// where inside the cell, 0..1</span>
+  f = f * f * (<span class="hljs-number">3.0</span> - <span class="hljs-number">2.0</span> * f);       <span class="hljs-comment">// smooth the blend (no visible grid)</span>
+  <span class="hljs-keyword">return</span> <span class="hljs-built_in">mix</span>(
+    <span class="hljs-built_in">mix</span>(<span class="hljs-built_in">mix</span>(hash(i + <span class="hljs-type">vec3</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>)), hash(i + <span class="hljs-type">vec3</span>(<span class="hljs-number">1</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>)), f.x),
+        <span class="hljs-built_in">mix</span>(hash(i + <span class="hljs-type">vec3</span>(<span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0</span>)), hash(i + <span class="hljs-type">vec3</span>(<span class="hljs-number">1</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0</span>)), f.x), f.y),
+    <span class="hljs-built_in">mix</span>(<span class="hljs-built_in">mix</span>(hash(i + <span class="hljs-type">vec3</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>)), hash(i + <span class="hljs-type">vec3</span>(<span class="hljs-number">1</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>)), f.x),
+        <span class="hljs-built_in">mix</span>(hash(i + <span class="hljs-type">vec3</span>(<span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">1</span>)), hash(i + <span class="hljs-type">vec3</span>(<span class="hljs-number">1</span>, <span class="hljs-number">1</span>, <span class="hljs-number">1</span>)), f.x), f.y),
+    f.z);
+}
+
+<span class="hljs-comment">// Fractal Brownian motion: the same noise at 5 sizes, each half as strong</span>
+<span class="hljs-type">float</span> fbm(<span class="hljs-type">vec3</span> p) {
+  <span class="hljs-type">float</span> value = <span class="hljs-number">0.0</span>;
+  <span class="hljs-type">float</span> amplitude = <span class="hljs-number">0.5</span>;
+  <span class="hljs-keyword">for</span> (<span class="hljs-type">int</span> i = <span class="hljs-number">0</span>; i &lt; <span class="hljs-number">5</span>; i++) {
+    value += amplitude * noise(p);
+    p *= <span class="hljs-number">2.02</span>;
+    amplitude *= <span class="hljs-number">0.5</span>;
+  }
+  <span class="hljs-keyword">return</span> value;
+}
+</code></pre>
+<p>One layer of noise looks like soft blobs. <code>fbm</code> stacks several layers, each twice as detailed and half as strong, which is what makes it look like clouds or fire: big shapes with small detail on top. We feed it the position on the sphere, not the UV, so there is no seam and no pinching at the poles, and add the time so it drifts:</p>
+<pre class="hljs"><code class="language-glsl"><span class="hljs-type">float</span> n = fbm(vPosition * uNoiseScale + <span class="hljs-type">vec3</span>(<span class="hljs-number">0.0</span>, uTime * <span class="hljs-number">0.25</span>, uTime * <span class="hljs-number">0.1</span>));
+<span class="hljs-type">vec3</span> color = <span class="hljs-built_in">mix</span>(uColorA, uColorB, <span class="hljs-built_in">smoothstep</span>(<span class="hljs-number">0.35</span>, <span class="hljs-number">0.75</span>, n));
+</code></pre>
+<p><strong>Fresnel</strong> (say &quot;fruh-NEL&quot;) is the effect you see on a lake: looking straight down you see into the water, looking towards the horizon it turns into a mirror. Surfaces seen edge-on reflect more. Shaders exaggerate this into a glowing <strong>rim</strong>: compare the surface normal <code>N</code> with the direction towards the camera <code>V</code>. Facing the camera, <code>dot(N, V)</code> is 1; at the silhouette it is 0. Flip that and raise it to a power to control how thin the rim is:</p>
+<pre class="hljs"><code class="language-glsl"><span class="hljs-type">vec3</span> N = <span class="hljs-built_in">normalize</span>(vNormal);    <span class="hljs-comment">// view space, from the vertex shader</span>
+<span class="hljs-type">vec3</span> V = <span class="hljs-built_in">normalize</span>(vViewDir);   <span class="hljs-comment">// from the surface towards the camera</span>
+<span class="hljs-type">float</span> fresnel = <span class="hljs-built_in">pow</span>(<span class="hljs-number">1.0</span> - <span class="hljs-built_in">clamp</span>(<span class="hljs-built_in">dot</span>(N, V), <span class="hljs-number">0.0</span>, <span class="hljs-number">1.0</span>), uRimPower);
+color += uRimColor * fresnel * uRimIntensity;
+</code></pre>
+<p>Both vectors must be in the same space. Step 4 works in view space, where the camera sits at the origin, so the direction to the camera is just minus the position: the vertex shader writes <code>vViewDir = -mvPosition.xyz</code> and <code>vNormal = normalize(normalMatrix * normal)</code>. The final demo's water does the same in world space instead, with <code>cameraPosition - vWorldPosition</code>.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-4/step-4-noise-rim.webp" alt="Screenshot: a sphere covered in swirling orange and dark purple cloud-like noise, with a bright cyan glow around its edge." width="960" height="600" loading="lazy">
+  <figcaption>Step 4: fbm noise mixed between two colours, plus a fresnel rim. (<a href="/3d-tutorial/demos/part-4/step-4.html" target="_blank" rel="noopener">step-4.html</a>)</figcaption>
+</figure>
+<figure>
+  <img src="/3d-tutorial/images/part-4/step-4-fresnel.webp" alt="Screenshot: a dark sphere that is almost black in the middle and glows cyan towards its edge, like a bubble or a planet's atmosphere." width="960" height="600" loading="lazy">
+  <figcaption>Step 4 with <code>?effect=rim</code>: the fresnel term alone. Raise "rim power" in the panel to make the edge thinner. (<a href="/3d-tutorial/demos/part-4/step-4.html?effect=rim" target="_blank" rel="noopener">step-4.html?effect=rim</a>)</figcaption>
+</figure>
+<p>A rim like this is the cheapest way to make an object glow, look like a hologram or get an atmosphere. It is not real light, but it reads as one.</p>
+<h2>Changing a built-in material: onBeforeCompile</h2>
+<p><code>ShaderMaterial</code> gives you total control, and with it total responsibility. Our waves have no shadows, no environment reflections, no physically based lighting. Rewriting <code>MeshStandardMaterial</code> by hand would be hundreds of lines. Often you only want to change one small thing about a built-in material: bend its vertices, tint its colour, and keep everything else.</p>
+<p><code>onBeforeCompile</code> is the hook for that. Three.js calls it with the material's generated shader source just before compiling it, and you may edit the strings. Since built-in materials are assembled from <code>#include</code> chunks, the trick is to find the chunk where the value you want is set, and add a line after it. Here we twist a lit box around its vertical axis:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> uniforms = { <span class="hljs-attr">uTime</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">0</span> }, <span class="hljs-attr">uTwist</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">1.2</span> } };
+
+<span class="hljs-comment">// GLSL we add at the top of the vertex shader</span>
+<span class="hljs-keyword">const</span> twistPars = <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+  uniform float uTime;
+  uniform float uTwist;
+
+  // Radians to turn a point at height y around the vertical axis
+  float twistAngle(float y) {
+    return uTwist * sin(uTime) * (y - 1.25);
+  }
+
+  mat2 rotate2d(float a) {
+    float s = sin(a), c = cos(a);
+    return mat2(c, s, -s, c);
+  }
+`</span>;
+
+<span class="hljs-keyword">function</span> <span class="hljs-title function_">addTwist</span>(<span class="hljs-params">shader</span>) {
+  shader.<span class="hljs-property">uniforms</span>.<span class="hljs-property">uTime</span> = uniforms.<span class="hljs-property">uTime</span>;   <span class="hljs-comment">// the same objects, so updating them works</span>
+  shader.<span class="hljs-property">uniforms</span>.<span class="hljs-property">uTwist</span> = uniforms.<span class="hljs-property">uTwist</span>;
+
+  shader.<span class="hljs-property">vertexShader</span> = shader.<span class="hljs-property">vertexShader</span>
+    .<span class="hljs-title function_">replace</span>(<span class="hljs-string">&#x27;#include &lt;common&gt;&#x27;</span>, <span class="hljs-string">`#include &lt;common&gt;\n<span class="hljs-subst">${twistPars}</span>`</span>)
+    <span class="hljs-comment">// objectNormal is the normal before any transform: turn it with the surface</span>
+    .<span class="hljs-title function_">replace</span>(<span class="hljs-string">&#x27;#include &lt;beginnormal_vertex&gt;&#x27;</span>, <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+      #include &lt;beginnormal_vertex&gt;
+      objectNormal.xz = rotate2d(twistAngle(position.y)) * objectNormal.xz;
+    `</span>)
+    <span class="hljs-comment">// transformed is the position before any transform: turn it too</span>
+    .<span class="hljs-title function_">replace</span>(<span class="hljs-string">&#x27;#include &lt;begin_vertex&gt;&#x27;</span>, <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+      #include &lt;begin_vertex&gt;
+      transformed.xz = rotate2d(twistAngle(position.y)) * transformed.xz;
+    `</span>);
+}
+
+<span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0x3fc8a8</span>, <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.3</span>, <span class="hljs-attr">metalness</span>: <span class="hljs-number">0.2</span> });
+material.<span class="hljs-property">onBeforeCompile</span> = addTwist;
+</code></pre>
+<p>How do you know the chunks are called <code>begin_vertex</code> and <code>beginnormal_vertex</code>, and that the variables inside are <code>transformed</code> and <code>objectNormal</code>? By reading them. Every chunk lives in <a href="https://github.com/mrdoob/three.js/tree/r186/src/renderers/shaders/ShaderChunk" target="_blank" rel="noopener"><code>src/renderers/shaders/ShaderChunk/</code></a> in the Three.js repo, and the material templates that use them are in <code>ShaderLib/</code>. <code>begin_vertex</code> is literally one line, <code>vec3 transformed = vec3( position );</code>, and everything after it (skinning, morphing, the projection) reads <code>transformed</code>. So changing it there moves the vertex for the rest of the shader. You can also log <code>shader.vertexShader</code> inside the callback to see the full source before the includes are expanded.</p>
+<p>The rotation is a 2D one in the x/z plane, with an angle that grows with the height <code>y</code>: the bottom stays put and the top turns furthest. We turn the normal by the same angle, so the lighting follows the new shape. (Strictly, a twist also tilts the normals a little; at this amount nobody can tell.)</p>
+<h3>The shadow does not know</h3>
+<p>Run that and there is a surprise. The box twists, the lighting is right, but the shadow on the ground stays straight:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-4/step-5-shadow-unpatched.webp" alt="Screenshot: a twisted teal box standing on a grey ground, lit from the left. Its shadow on the ground is a plain straight rectangle that does not match the twisted shape." width="960" height="600" loading="lazy">
+  <figcaption>Step 5 with <code>?shadowPatch=0</code>: the mesh is twisted, its shadow is not. (<a href="/3d-tutorial/demos/part-4/step-5.html?shadowPatch=0&amp;still=1" target="_blank" rel="noopener">step-5.html?shadowPatch=0</a>)</figcaption>
+</figure>
+<p>Remember from Part 3 how shadows work: the scene is drawn a second time, from the light, into a depth texture. That pass does not use your material. It uses a separate <code>MeshDepthMaterial</code>, which never ran our patch. The fix is to give the mesh its own depth material with the same patch:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> depthMaterial = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshDepthMaterial</span>();
+depthMaterial.<span class="hljs-property">onBeforeCompile</span> = addTwist;
+tower.<span class="hljs-property">customDepthMaterial</span> = depthMaterial;   <span class="hljs-comment">// use this one for the shadow pass</span>
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-4/step-5-twist.webp" alt="Screenshot: the same twisted teal box, now with a shadow on the ground whose edges twist to match the shape." width="960" height="600" loading="lazy">
+  <figcaption>Step 5: a lit <code>MeshStandardMaterial</code>, twisted by <code>onBeforeCompile</code>, with a matching <code>customDepthMaterial</code> for the shadow. Toggle "patch shadow too" in the panel to compare. (<a href="/3d-tutorial/demos/part-4/step-5.html" target="_blank" rel="noopener">step-5.html</a>)</figcaption>
+</figure>
+<p>The same <code>addTwist</code> works for both materials because the depth shader also includes <code>common</code> and <code>begin_vertex</code>. That is why the angle is a function, <code>twistAngle(position.y)</code>, and not a variable set in one chunk and read in another: the depth shader skips <code>beginnormal_vertex</code> (it has no lighting), so a variable declared there would not exist. For point lights the shadow pass uses <code>customDistanceMaterial</code> instead; patch that too if your mesh is lit by one.</p>
+<p><code>onBeforeCompile</code> is powerful but fragile. It depends on chunk names and variable names that are internal to Three.js and can change between versions. Pin your Three.js version, and if a patch silently stops working after an upgrade, check that <code>.replace</code> still finds its target. One more trap: Three.js caches compiled programs. If two materials of the same type get <em>different</em> patches, give each one a <code>customProgramCacheKey</code> that returns a different string, or they may share one program.</p>
+<h2>GLSL, WGSL and TSL</h2>
+<p>Everything above is GLSL, the shading language of WebGL. If you have been following graphics on the web lately, you have also seen two other names. Here is how the three fit together.</p>
+<p><strong>GLSL</strong> is the language WebGL understands. <code>WebGLRenderer</code>, <code>ShaderMaterial</code>, <code>RawShaderMaterial</code> and <code>onBeforeCompile</code> all speak it. It is mature, it runs on every browser, and nearly every shader tutorial and example on the internet, including <a href="https://thebookofshaders.com/" target="_blank" rel="noopener">The Book of Shaders</a> and <a href="https://www.shadertoy.com/" target="_blank" rel="noopener">Shadertoy</a>, is GLSL. Nothing you learned in this article goes out of date.</p>
+<p><strong>WGSL</strong> (WebGPU Shading Language) is the language of WebGPU, the successor to WebGL. Same ideas, a more Rust-like spelling: types after names, explicit inputs and outputs. The UV-as-colour fragment shader in each:</p>
+<pre class="hljs"><code class="language-glsl"><span class="hljs-comment">// GLSL (WebGL)</span>
+<span class="hljs-keyword">varying</span> <span class="hljs-type">vec2</span> vUv;
+
+<span class="hljs-type">void</span> main() {
+  <span class="hljs-built_in">gl_FragColor</span> = <span class="hljs-type">vec4</span>(vUv, <span class="hljs-number">0.0</span>, <span class="hljs-number">1.0</span>);
+}
+</code></pre>
+<pre class="hljs"><code>// WGSL (WebGPU)
+@fragment
+fn main(@location(0) vUv: vec2f) -&gt; @location(0) vec4f {
+  return vec4f(vUv, 0.0, 1.0);
+}
+</code></pre>
+<p><strong>TSL</strong> (Three.js Shading Language) is not a third text language. It is a set of JavaScript functions that <em>build</em> a shader. You write <code>sin(positionLocal.x.mul(frequency).add(time))</code> instead of a string, and Three.js turns the result into a graph of nodes. When the material compiles, the graph becomes <strong>WGSL</strong> if the browser runs the WebGPU backend, or <strong>GLSL</strong> if <code>WebGPURenderer</code> falls back to WebGL 2. You write the shader once; it runs on both.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-4/tsl-targets.svg" alt="Diagram. A TSL box, written in JavaScript with material.colorNode = mix(deep, crest, h), builds a graph of nodes once when the material compiles. One arrow leads to WGSL, then to the WebGPU backend for browsers with WebGPU. Another leads to GLSL ES 3.0, then to the WebGL 2 backend as the automatic fallback. A footer: WebGPURenderer picks the backend at init(); a ShaderMaterial written in GLSL only runs on WebGLRenderer." width="880" height="360" loading="lazy">
+</figure>
+<p>Here are the waves from step 3 in TSL. Compare it line by line with the GLSL version:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/webgpu&#x27;</span>;
+<span class="hljs-keyword">import</span> { positionLocal, time, sin, mix, smoothstep, uniform, varying, vec3 } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/tsl&#x27;</span>;
+
+<span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGPURenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span> });
+<span class="hljs-keyword">await</span> renderer.<span class="hljs-title function_">init</span>();   <span class="hljs-comment">// picks WebGPU, or falls back to WebGL 2</span>
+
+<span class="hljs-keyword">const</span> amplitude = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.25</span>);
+<span class="hljs-keyword">const</span> frequency = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">3.0</span>);
+<span class="hljs-keyword">const</span> deep = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#0b3d91&#x27;</span>));
+<span class="hljs-keyword">const</span> crest = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#7cf5d4&#x27;</span>));
+
+<span class="hljs-keyword">const</span> elevation = <span class="hljs-title function_">sin</span>(positionLocal.<span class="hljs-property">x</span>.<span class="hljs-title function_">mul</span>(frequency).<span class="hljs-title function_">add</span>(time)).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.5</span>)
+  .<span class="hljs-title function_">add</span>(<span class="hljs-title function_">sin</span>(positionLocal.<span class="hljs-property">y</span>.<span class="hljs-title function_">mul</span>(frequency).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.8</span>).<span class="hljs-title function_">add</span>(time.<span class="hljs-title function_">mul</span>(<span class="hljs-number">1.3</span>))).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.5</span>))
+  .<span class="hljs-title function_">mul</span>(amplitude);
+
+<span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshBasicNodeMaterial</span>();
+material.<span class="hljs-property">positionNode</span> = positionLocal.<span class="hljs-title function_">add</span>(<span class="hljs-title function_">vec3</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>, elevation));       <span class="hljs-comment">// vertex stage</span>
+<span class="hljs-keyword">const</span> vElevation = <span class="hljs-title function_">varying</span>(elevation);                                    <span class="hljs-comment">// like a GLSL varying</span>
+material.<span class="hljs-property">colorNode</span> = <span class="hljs-title function_">mix</span>(deep, crest, <span class="hljs-title function_">smoothstep</span>(amplitude.<span class="hljs-title function_">negate</span>(), amplitude, vElevation));   <span class="hljs-comment">// fragment stage</span>
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-4/step-6-tsl.webp" alt="Screenshot: the same deep blue and cyan wave patch as step 3, rendered with WebGPURenderer. A panel says TSL + WebGPURenderer, running on: WebGL 2 fallback (shaders compiled to GLSL)." width="960" height="600" loading="lazy">
+  <figcaption>Step 6: the step 3 waves rewritten in TSL. The panel shows which backend your browser picked; this screenshot came from a browser without WebGPU, so TSL compiled to GLSL. (<a href="/3d-tutorial/demos/part-4/step-6.html" target="_blank" rel="noopener">step-6.html</a>)</figcaption>
+</figure>
+<p>The building blocks are the same ones you learned in GLSL: <code>sin</code>, <code>mix</code>, <code>smoothstep</code>, uniforms, varyings, a vertex stage and a fragment stage. Arithmetic becomes method calls (<code>a.mul(b)</code> instead of <code>a * b</code>), because JavaScript cannot overload operators. In return you get JavaScript's imports, functions and tooling, and the same material runs on WebGPU and WebGL.</p>
+<p>So which one should you learn? Both, in this order. GLSL is what <code>WebGLRenderer</code> runs today and what nearly every shader resource is written in, and its ideas carry over one-to-one. TSL is where Three.js is heading: <code>WebGPURenderer</code> does not run <code>ShaderMaterial</code> or <code>onBeforeCompile</code> at all; it works with node materials and TSL. That is the subject of the next part.</p>
+<h2>The final demo</h2>
+<p>The demo at the top puts everything together in two <code>ShaderMaterial</code>s:</p>
+<ul>
+<li><strong>The water</strong> is a <code>PlaneGeometry(24, 24, 384, 384)</code>. Its vertex shader adds three sine waves and rings that spread from the pointer, computes normals by finite differences, and passes on world position, normal, UV and height. Its fragment shader colours by height, adds diffuse light, a fresnel sky reflection, a sun glint and foam on the highest crests, then fades into distance fog. It ends with both <code>#include</code>s, so tone mapping and colour space match the rest of Three.js.</li>
+<li><strong>The orb</strong> is a sphere whose vertex shader pushes each vertex in and out along its normal with fbm noise, so its outline wobbles, and whose fragment shader is step 4: noise colour plus a fresnel rim.</li>
+<li><strong>Both share one <code>uTime</code> object</strong>: the orb's uniforms are created with <code>uTime: uniforms.uTime</code>, the water's own object. Updating it once per frame updates both materials.</li>
+<li>The <strong>debug view</strong> in the water panel shows the UVs, the normals or the height instead of the shading. This is the &quot;print statement&quot; of shaders, and the first thing to reach for when something looks wrong:</li>
+</ul>
+<figure>
+  <img src="/3d-tutorial/images/part-4/final-normals.webp" alt="Screenshot: the final demo's ocean with the debug view set to normals. The water is drawn in pale greens, blues and pinks, the colours of its normal vectors, with the orange noise orb floating above." width="960" height="600" loading="lazy">
+  <figcaption>The final demo with debug view "normals": each normal's x, y and z shown as red, green and blue. Mostly green because the water mostly faces up.</figcaption>
+</figure>
+<p>For the ripples, the pointer is raycast against the water plane and the hit point is converted into the plane's own x/y coordinates with <code>water.worldToLocal</code>, the same space the vertex shader's <code>position</code> uses. A second uniform, <code>uRipple</code>, fades from 1 to 0 over about two seconds after the pointer stops, so the rings calm down by themselves.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-4/demo.gif" alt="Animation of the final demo: waves rolling on a dark blue ocean, rings rippling out from a moving point, the water briefly shown with normals as colour, and the glowing orange orb with its cyan rim bobbing above the water." width="480" height="300" loading="lazy">
+  <figcaption>The final demo: sine waves, mouse ripples, the normals debug view and the noise orb.</figcaption>
+</figure>
+<h2>When it goes wrong: common pitfalls</h2>
+<ul>
+<li><strong>A black or missing mesh, and a long error in the console.</strong> That is a compile error. Three.js prints the whole shader with line numbers and marks the failing line; scroll up to the first <code>ERROR:</code> line. The usual suspects: <code>1</code> instead of <code>1.0</code>, a missing semicolon, a varying declared in only one shader, or a typo in a uniform name.</li>
+<li><strong>Everything is too dark or too saturated.</strong> You forgot <code>#include &lt;colorspace_fragment&gt;</code>, so linear colours were shown as if they were sRGB.</li>
+<li><strong>The uniform changes but nothing moves.</strong> You replaced the object instead of its value: <code>material.uniforms.uTime = { value: 1 }</code> disconnects it; write <code>material.uniforms.uTime.value = 1</code>. With <code>onBeforeCompile</code>, make sure <code>shader.uniforms.uTime</code> <em>is</em> your object, not a copy.</li>
+<li><strong>Banding or dark stripes across triangles.</strong> A normal or direction read from a varying was not normalized.</li>
+<li><strong>The displaced mesh disappears near the screen edge.</strong> Frustum culling uses the original bounding sphere. Enlarge it or set <code>frustumCulled = false</code>.</li>
+<li><strong>Blocky or spiky waves.</strong> Not enough vertices, or an amplitude so large that neighbouring vertices fold over each other.</li>
+<li><strong><code>pow</code> returns nonsense.</strong> <code>pow(x, y)</code> is undefined for negative <code>x</code> in GLSL. Clamp first, as the fresnel code does.</li>
+<li><strong>Works on desktop, breaks on a phone.</strong> Mobile GPUs may run the fragment shader at lower precision (<code>mediump</code>). Large values, such as an ever-growing <code>uTime</code> fed into <code>sin</code>, lose precision first. Keep the numbers you feed into <code>sin</code> modest, or wrap time with <code>mod</code>.</li>
+<li><strong>An <code>onBeforeCompile</code> patch does nothing after an upgrade.</strong> A chunk was renamed. Log the shader source and check that each <code>.replace</code> still finds its target.</li>
+</ul>
+<h2>The full code</h2>
+<p>Here is the final demo in one file. It loads nothing but Three.js from the CDN, so you can save it and open it straight from disk.</p>
+<pre class="hljs"><code class="language-html"><span class="hljs-meta">&lt;!doctype <span class="hljs-keyword">html</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">html</span> <span class="hljs-attr">lang</span>=<span class="hljs-string">&quot;en&quot;</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">head</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">charset</span>=<span class="hljs-string">&quot;utf-8&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">name</span>=<span class="hljs-string">&quot;viewport&quot;</span> <span class="hljs-attr">content</span>=<span class="hljs-string">&quot;width=device-width, initial-scale=1&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">title</span>&gt;</span>Three.js from Scratch · Part 4 demo: Your First Shaders<span class="hljs-tag">&lt;/<span class="hljs-name">title</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">style</span>&gt;</span><span class="language-css">
+    <span class="hljs-selector-tag">html</span>, <span class="hljs-selector-tag">body</span> { <span class="hljs-attribute">margin</span>: <span class="hljs-number">0</span>; <span class="hljs-attribute">height</span>: <span class="hljs-number">100%</span>; <span class="hljs-attribute">background</span>: <span class="hljs-number">#000</span>; }
+    <span class="hljs-selector-tag">canvas</span> { <span class="hljs-attribute">display</span>: block; }
+    <span class="hljs-selector-class">.hint</span> { <span class="hljs-attribute">position</span>: absolute; <span class="hljs-attribute">left</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">bottom</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">font</span>: <span class="hljs-number">400</span> <span class="hljs-number">12px</span>/<span class="hljs-number">1.45</span> ui-monospace, Menlo, Consolas, monospace; <span class="hljs-attribute">color</span>: <span class="hljs-number">#9aa3b5</span>; <span class="hljs-attribute">pointer-events</span>: none; }
+    <span class="hljs-selector-class">.panel</span> { <span class="hljs-attribute">position</span>: absolute; <span class="hljs-attribute">left</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">top</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">max-width</span>: <span class="hljs-built_in">calc</span>(<span class="hljs-number">100%</span> - <span class="hljs-number">48px</span>); <span class="hljs-attribute">font</span>: <span class="hljs-number">400</span> <span class="hljs-number">12px</span>/<span class="hljs-number">1.45</span> ui-monospace, Menlo, Consolas, monospace; <span class="hljs-attribute">color</span>: <span class="hljs-number">#e7eaf0</span>; <span class="hljs-attribute">background</span>: <span class="hljs-built_in">rgba</span>(<span class="hljs-number">18</span>, <span class="hljs-number">21</span>, <span class="hljs-number">29</span>, .<span class="hljs-number">85</span>); <span class="hljs-attribute">border</span>: <span class="hljs-number">1px</span> solid <span class="hljs-number">#3a4258</span>; <span class="hljs-attribute">border-radius</span>: <span class="hljs-number">8px</span>; <span class="hljs-attribute">padding</span>: <span class="hljs-number">8px</span> <span class="hljs-number">11px</span>; <span class="hljs-attribute">white-space</span>: pre; <span class="hljs-attribute">overflow</span>: hidden; }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">style</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;importmap&quot;</span>&gt;</span><span class="language-javascript">
+    {
+      <span class="hljs-string">&quot;imports&quot;</span>: {
+        <span class="hljs-string">&quot;three&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js&quot;</span>,
+        <span class="hljs-string">&quot;three/addons/&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/&quot;</span>
+      }
+    }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">head</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">body</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">div</span> <span class="hljs-attr">class</span>=<span class="hljs-string">&quot;hint&quot;</span>&gt;</span>Drag to orbit · move the pointer over the water to make ripples<span class="hljs-tag">&lt;/<span class="hljs-name">div</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;module&quot;</span>&gt;</span><span class="language-javascript">
+    <span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">OrbitControls</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/controls/OrbitControls.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-variable constant_">GUI</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/libs/lil-gui.module.min.js&#x27;</span>;
+
+    <span class="hljs-keyword">const</span> scene = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Scene</span>();
+    <span class="hljs-keyword">const</span> fogColor = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#0d1220&#x27;</span>);
+    scene.<span class="hljs-property">background</span> = fogColor;
+
+    <span class="hljs-keyword">const</span> camera = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PerspectiveCamera</span>(<span class="hljs-number">45</span>, innerWidth / innerHeight, <span class="hljs-number">0.1</span>, <span class="hljs-number">100</span>);
+    camera.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">3.1</span>, <span class="hljs-number">7.2</span>);
+
+    <span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGLRenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span> });
+    renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+    renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    <span class="hljs-variable language_">document</span>.<span class="hljs-property">body</span>.<span class="hljs-title function_">appendChild</span>(renderer.<span class="hljs-property">domElement</span>);
+
+    <span class="hljs-keyword">const</span> controls = <span class="hljs-keyword">new</span> <span class="hljs-title class_">OrbitControls</span>(camera, renderer.<span class="hljs-property">domElement</span>);
+    controls.<span class="hljs-property">target</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0.6</span>, <span class="hljs-number">0</span>);
+    controls.<span class="hljs-property">enableDamping</span> = <span class="hljs-literal">true</span>;
+    controls.<span class="hljs-property">maxPolarAngle</span> = <span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> * <span class="hljs-number">0.47</span>;   <span class="hljs-comment">// stay above the water</span>
+    controls.<span class="hljs-property">minDistance</span> = <span class="hljs-number">3</span>;
+    controls.<span class="hljs-property">maxDistance</span> = <span class="hljs-number">14</span>;
+
+    <span class="hljs-comment">// ---------- Water: ShaderMaterial with vertex waves, normals, lighting and fog ----------</span>
+
+    <span class="hljs-keyword">const</span> uniforms = {
+      <span class="hljs-attr">uTime</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">0</span> },
+      <span class="hljs-attr">uAmplitude</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">0.3</span> },
+      <span class="hljs-attr">uFrequency</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">1.6</span> },
+      <span class="hljs-attr">uChoppiness</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">0.8</span> },
+      <span class="hljs-attr">uMouse</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector2</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>) },     <span class="hljs-comment">// in the plane&#x27;s own x/y</span>
+      <span class="hljs-attr">uRipple</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">0</span> },                          <span class="hljs-comment">// fades out when the pointer stops</span>
+      <span class="hljs-attr">uDeep</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#06204f&#x27;</span>) },
+      <span class="hljs-attr">uCrest</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#1fa2b8&#x27;</span>) },
+      <span class="hljs-attr">uFoam</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#e8fbff&#x27;</span>) },
+      <span class="hljs-attr">uSky</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#6fb4e6&#x27;</span>) },
+      <span class="hljs-attr">uLightDir</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>(-<span class="hljs-number">0.4</span>, <span class="hljs-number">0.8</span>, -<span class="hljs-number">0.45</span>).<span class="hljs-title function_">normalize</span>() },
+      <span class="hljs-attr">uFogColor</span>: { <span class="hljs-attr">value</span>: fogColor },
+      <span class="hljs-attr">uFogNear</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">6</span> },
+      <span class="hljs-attr">uFogFar</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">16</span> },
+      <span class="hljs-attr">uView</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">0</span> },                            <span class="hljs-comment">// 0 shaded, 1 UVs, 2 normals, 3 elevation</span>
+    };
+
+    <span class="hljs-keyword">const</span> waterVertex = <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+      uniform float uTime;
+      uniform float uAmplitude;
+      uniform float uFrequency;
+      uniform float uChoppiness;
+      uniform vec2 uMouse;
+      uniform float uRipple;
+
+      varying vec2 vUv;
+      varying float vElevation;
+      varying vec3 vWorldPosition;
+      varying vec3 vWorldNormal;
+
+      // Height of the water at a point p of the flat plane
+      float elevation(vec2 p) {
+        float e = sin(p.x * uFrequency + uTime) * cos(p.y * uFrequency * 0.6 + uTime * 0.7) * 0.6;
+        e += sin((p.x + p.y) * uFrequency * 1.7 - uTime * 1.4) * 0.25 * uChoppiness;
+        e += sin((p.x * 0.6 - p.y) * uFrequency * 3.1 + uTime * 2.1) * 0.12 * uChoppiness;
+
+        // Rings spreading out from the pointer, weaker with distance
+        float d = distance(p, uMouse);
+        e += sin(d * 9.0 - uTime * 6.0) * exp(-d * 1.1) * uRipple * 0.5;
+
+        return e * uAmplitude;
+      }
+
+      void main() {
+        vUv = uv;
+        vec3 p = position;
+        float e = elevation(p.xy);
+        p.z += e;
+        vElevation = e;
+
+        // The normal of a displaced surface: sample the height a tiny step away
+        // in x and in y, and build the normal from the two slopes.
+        float eps = 0.01;
+        float ex = elevation(p.xy + vec2(eps, 0.0));
+        float ey = elevation(p.xy + vec2(0.0, eps));
+        vec3 objectNormal = normalize(vec3(-(ex - e) / eps, -(ey - e) / eps, 1.0));
+
+        vec4 worldPosition = modelMatrix * vec4(p, 1.0);
+        vWorldPosition = worldPosition.xyz;
+        vWorldNormal = normalize(mat3(modelMatrix) * objectNormal);
+        gl_Position = projectionMatrix * viewMatrix * worldPosition;
+      }
+    `</span>;
+
+    <span class="hljs-keyword">const</span> waterFragment = <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+      uniform float uAmplitude;
+      uniform vec3 uDeep;
+      uniform vec3 uCrest;
+      uniform vec3 uFoam;
+      uniform vec3 uSky;
+      uniform vec3 uLightDir;
+      uniform vec3 uFogColor;
+      uniform float uFogNear;
+      uniform float uFogFar;
+      uniform int uView;
+
+      varying vec2 vUv;
+      varying float vElevation;
+      varying vec3 vWorldPosition;
+      varying vec3 vWorldNormal;
+
+      void main() {
+        vec3 N = normalize(vWorldNormal);
+        vec3 V = normalize(cameraPosition - vWorldPosition);   // cameraPosition is built in
+        vec3 L = normalize(uLightDir);
+        float h = smoothstep(-uAmplitude, uAmplitude, vElevation);
+
+        vec3 color = mix(uDeep, uCrest, h);
+        color *= 0.35 + 0.65 * max(dot(N, L), 0.0);                    // diffuse
+        float fresnel = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+        color = mix(color, uSky, fresnel * 0.35);                        // sky reflection at grazing angles
+        vec3 H = normalize(L + V);
+        color += vec3(1.0) * pow(max(dot(N, H), 0.0), 300.0) * 1.2;     // sun glint
+        color = mix(color, uFoam, smoothstep(0.9, 1.0, h) * 0.35);      // foam on the highest crests
+
+        if (uView == 1) color = vec3(vUv, 0.0);
+        if (uView == 2) color = N * 0.5 + 0.5;
+        if (uView == 3) color = vec3(h);
+
+        float fog = smoothstep(uFogNear, uFogFar, distance(cameraPosition, vWorldPosition));
+        color = mix(color, uFogColor, fog);
+
+        gl_FragColor = vec4(color, 1.0);
+        #include &lt;tonemapping_fragment&gt;
+        #include &lt;colorspace_fragment&gt;
+      }
+    `</span>;
+
+    <span class="hljs-keyword">const</span> waterMaterial = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">ShaderMaterial</span>({ uniforms, <span class="hljs-attr">vertexShader</span>: waterVertex, <span class="hljs-attr">fragmentShader</span>: waterFragment });
+    <span class="hljs-keyword">const</span> water = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PlaneGeometry</span>(<span class="hljs-number">24</span>, <span class="hljs-number">24</span>, <span class="hljs-number">384</span>, <span class="hljs-number">384</span>), waterMaterial);
+    water.<span class="hljs-property">rotation</span>.<span class="hljs-property">x</span> = -<span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> / <span class="hljs-number">2</span>;
+    scene.<span class="hljs-title function_">add</span>(water);
+
+    <span class="hljs-comment">// ---------- Orb: noise, a little vertex wobble and a fresnel rim ----------</span>
+
+    <span class="hljs-keyword">const</span> orbUniforms = {
+      <span class="hljs-attr">uTime</span>: uniforms.<span class="hljs-property">uTime</span>,                           <span class="hljs-comment">// shared: one object, two materials</span>
+      <span class="hljs-attr">uColorA</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#1a1446&#x27;</span>) },
+      <span class="hljs-attr">uColorB</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#ff7a3d&#x27;</span>) },
+      <span class="hljs-attr">uRimColor</span>: { <span class="hljs-attr">value</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#7cf5d4&#x27;</span>) },
+      <span class="hljs-attr">uNoiseScale</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">2.2</span> },
+      <span class="hljs-attr">uWobble</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">0.08</span> },
+      <span class="hljs-attr">uRimPower</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">2.5</span> },
+      <span class="hljs-attr">uRimIntensity</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">1.4</span> },
+    };
+
+    <span class="hljs-keyword">const</span> orbVertex = <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+      uniform float uTime;
+      uniform float uWobble;
+      uniform float uNoiseScale;
+
+      varying vec3 vPosition;
+      varying vec3 vNormal;
+      varying vec3 vViewDir;
+
+      // Value noise: random numbers on a 3D grid, smoothly blended in between
+      float hash(vec3 p) {
+        p = fract(p * 0.3183099 + 0.1);
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+      }
+
+      float noise(vec3 x) {
+        vec3 i = floor(x);
+        vec3 f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);                // smooth the blend (no visible grid)
+        return mix(
+          mix(mix(hash(i + vec3(0, 0, 0)), hash(i + vec3(1, 0, 0)), f.x),
+              mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+          mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x),
+              mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
+          f.z);
+      }
+
+      // Fractal Brownian motion: the same noise at 5 sizes, each half as strong
+      float fbm(vec3 p) {
+        float value = 0.0;
+        float amplitude = 0.5;
+        for (int i = 0; i &lt; 5; i++) {
+          value += amplitude * noise(p);
+          p *= 2.02;
+          amplitude *= 0.5;
+        }
+        return value;
+      }
+
+      void main() {
+        // Push each vertex out along its normal by a slowly changing noise value
+        float n = fbm(position * 1.5 + vec3(uTime * 0.3));
+        vec3 p = position + normal * (n - 0.5) * 2.0 * uWobble;
+
+        vPosition = position;
+        vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+        vNormal = normalize(normalMatrix * normal);
+        vViewDir = -mvPosition.xyz;
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `</span>;
+
+    <span class="hljs-keyword">const</span> orbFragment = <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+      uniform float uTime;
+      uniform vec3 uColorA;
+      uniform vec3 uColorB;
+      uniform vec3 uRimColor;
+      uniform float uNoiseScale;
+      uniform float uRimPower;
+      uniform float uRimIntensity;
+
+      varying vec3 vPosition;
+      varying vec3 vNormal;
+      varying vec3 vViewDir;
+
+      // Value noise: random numbers on a 3D grid, smoothly blended in between
+      float hash(vec3 p) {
+        p = fract(p * 0.3183099 + 0.1);
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+      }
+
+      float noise(vec3 x) {
+        vec3 i = floor(x);
+        vec3 f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);                // smooth the blend (no visible grid)
+        return mix(
+          mix(mix(hash(i + vec3(0, 0, 0)), hash(i + vec3(1, 0, 0)), f.x),
+              mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+          mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x),
+              mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
+          f.z);
+      }
+
+      // Fractal Brownian motion: the same noise at 5 sizes, each half as strong
+      float fbm(vec3 p) {
+        float value = 0.0;
+        float amplitude = 0.5;
+        for (int i = 0; i &lt; 5; i++) {
+          value += amplitude * noise(p);
+          p *= 2.02;
+          amplitude *= 0.5;
+        }
+        return value;
+      }
+
+      void main() {
+        float n = fbm(vPosition * uNoiseScale + vec3(0.0, uTime * 0.25, uTime * 0.1));
+        vec3 color = mix(uColorA, uColorB, smoothstep(0.35, 0.75, n));
+
+        float fresnel = pow(1.0 - clamp(dot(normalize(vNormal), normalize(vViewDir)), 0.0, 1.0), uRimPower);
+        color += uRimColor * fresnel * uRimIntensity;
+
+        gl_FragColor = vec4(color, 1.0);
+        #include &lt;tonemapping_fragment&gt;
+        #include &lt;colorspace_fragment&gt;
+      }
+    `</span>;
+
+    <span class="hljs-keyword">const</span> orbMaterial = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">ShaderMaterial</span>({ <span class="hljs-attr">uniforms</span>: orbUniforms, <span class="hljs-attr">vertexShader</span>: orbVertex, <span class="hljs-attr">fragmentShader</span>: orbFragment });
+    <span class="hljs-keyword">const</span> orb = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">SphereGeometry</span>(<span class="hljs-number">0.75</span>, <span class="hljs-number">128</span>, <span class="hljs-number">64</span>), orbMaterial);
+    scene.<span class="hljs-title function_">add</span>(orb);
+
+    <span class="hljs-comment">// ---------- Pointer -&gt; ripple centre ----------</span>
+
+    <span class="hljs-keyword">const</span> raycaster = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Raycaster</span>();
+    <span class="hljs-keyword">const</span> pointer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector2</span>();
+    <span class="hljs-keyword">let</span> lastMove = -<span class="hljs-title class_">Infinity</span>;
+    renderer.<span class="hljs-property">domElement</span>.<span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;pointermove&#x27;</span>, <span class="hljs-function">(<span class="hljs-params">event</span>) =&gt;</span> {
+      pointer.<span class="hljs-title function_">set</span>(event.<span class="hljs-property">clientX</span> / innerWidth * <span class="hljs-number">2</span> - <span class="hljs-number">1</span>, -(event.<span class="hljs-property">clientY</span> / innerHeight) * <span class="hljs-number">2</span> + <span class="hljs-number">1</span>);
+      raycaster.<span class="hljs-title function_">setFromCamera</span>(pointer, camera);
+      <span class="hljs-keyword">const</span> hit = raycaster.<span class="hljs-title function_">intersectObject</span>(water)[<span class="hljs-number">0</span>];   <span class="hljs-comment">// hits the flat plane; close enough for ripples</span>
+      <span class="hljs-keyword">if</span> (hit) {
+        <span class="hljs-keyword">const</span> local = water.<span class="hljs-title function_">worldToLocal</span>(hit.<span class="hljs-property">point</span>.<span class="hljs-title function_">clone</span>());
+        uniforms.<span class="hljs-property">uMouse</span>.<span class="hljs-property">value</span>.<span class="hljs-title function_">set</span>(local.<span class="hljs-property">x</span>, local.<span class="hljs-property">y</span>);
+        lastMove = performance.<span class="hljs-title function_">now</span>();
+      }
+    });
+
+    <span class="hljs-comment">// ---------- Panel ----------</span>
+
+    <span class="hljs-keyword">const</span> settings = {
+      <span class="hljs-attr">speed</span>: <span class="hljs-number">1</span>,
+      <span class="hljs-attr">ripples</span>: <span class="hljs-number">1</span>,
+      <span class="hljs-attr">wireframe</span>: <span class="hljs-literal">false</span>,
+      <span class="hljs-attr">view</span>: <span class="hljs-string">&#x27;shaded&#x27;</span>,
+      <span class="hljs-attr">deep</span>: <span class="hljs-string">&#x27;#06204f&#x27;</span>,
+      <span class="hljs-attr">crest</span>: <span class="hljs-string">&#x27;#1fa2b8&#x27;</span>,
+      <span class="hljs-attr">foam</span>: <span class="hljs-string">&#x27;#e8fbff&#x27;</span>,
+      <span class="hljs-attr">orbA</span>: <span class="hljs-string">&#x27;#1a1446&#x27;</span>,
+      <span class="hljs-attr">orbB</span>: <span class="hljs-string">&#x27;#ff7a3d&#x27;</span>,
+      <span class="hljs-attr">rim</span>: <span class="hljs-string">&#x27;#7cf5d4&#x27;</span>,
+    };
+    <span class="hljs-keyword">const</span> views = { <span class="hljs-attr">shaded</span>: <span class="hljs-number">0</span>, <span class="hljs-string">&#x27;UVs&#x27;</span>: <span class="hljs-number">1</span>, <span class="hljs-attr">normals</span>: <span class="hljs-number">2</span>, <span class="hljs-attr">elevation</span>: <span class="hljs-number">3</span> };
+
+    <span class="hljs-keyword">const</span> gui = <span class="hljs-keyword">new</span> <span class="hljs-title function_">GUI</span>({ <span class="hljs-attr">title</span>: <span class="hljs-string">&#x27;Part 4 controls&#x27;</span> });
+
+    <span class="hljs-keyword">const</span> wavesFolder = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Waves (vertex shader)&#x27;</span>);
+    wavesFolder.<span class="hljs-title function_">add</span>(uniforms.<span class="hljs-property">uAmplitude</span>, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0.8</span>, <span class="hljs-number">0.01</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;amplitude&#x27;</span>);
+    wavesFolder.<span class="hljs-title function_">add</span>(uniforms.<span class="hljs-property">uFrequency</span>, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0.3</span>, <span class="hljs-number">3</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;frequency&#x27;</span>);
+    wavesFolder.<span class="hljs-title function_">add</span>(uniforms.<span class="hljs-property">uChoppiness</span>, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1.5</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;choppiness&#x27;</span>);
+    wavesFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;speed&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">3</span>, <span class="hljs-number">0.05</span>);
+    wavesFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;ripples&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">2</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;mouse ripples&#x27;</span>);
+    wavesFolder.<span class="hljs-title function_">add</span>(waterMaterial, <span class="hljs-string">&#x27;wireframe&#x27;</span>);
+
+    <span class="hljs-keyword">const</span> waterFolder = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Water (fragment shader)&#x27;</span>);
+    waterFolder.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;view&#x27;</span>, <span class="hljs-title class_">Object</span>.<span class="hljs-title function_">keys</span>(views)).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;debug view&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> { uniforms.<span class="hljs-property">uView</span>.<span class="hljs-property">value</span> = views[v]; });
+    waterFolder.<span class="hljs-title function_">addColor</span>(settings, <span class="hljs-string">&#x27;deep&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> uniforms.<span class="hljs-property">uDeep</span>.<span class="hljs-property">value</span>.<span class="hljs-title function_">set</span>(v));
+    waterFolder.<span class="hljs-title function_">addColor</span>(settings, <span class="hljs-string">&#x27;crest&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> uniforms.<span class="hljs-property">uCrest</span>.<span class="hljs-property">value</span>.<span class="hljs-title function_">set</span>(v));
+    waterFolder.<span class="hljs-title function_">addColor</span>(settings, <span class="hljs-string">&#x27;foam&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> uniforms.<span class="hljs-property">uFoam</span>.<span class="hljs-property">value</span>.<span class="hljs-title function_">set</span>(v));
+
+    <span class="hljs-keyword">const</span> orbFolder = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Orb (noise + fresnel)&#x27;</span>);
+    orbFolder.<span class="hljs-title function_">add</span>(orbUniforms.<span class="hljs-property">uNoiseScale</span>, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0.5</span>, <span class="hljs-number">8</span>, <span class="hljs-number">0.1</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;noise scale&#x27;</span>);
+    orbFolder.<span class="hljs-title function_">add</span>(orbUniforms.<span class="hljs-property">uWobble</span>, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0.3</span>, <span class="hljs-number">0.01</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;wobble&#x27;</span>);
+    orbFolder.<span class="hljs-title function_">add</span>(orbUniforms.<span class="hljs-property">uRimPower</span>, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0.5</span>, <span class="hljs-number">8</span>, <span class="hljs-number">0.1</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;rim power&#x27;</span>);
+    orbFolder.<span class="hljs-title function_">add</span>(orbUniforms.<span class="hljs-property">uRimIntensity</span>, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">3</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;rim intensity&#x27;</span>);
+    orbFolder.<span class="hljs-title function_">addColor</span>(settings, <span class="hljs-string">&#x27;orbA&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;colour A&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> orbUniforms.<span class="hljs-property">uColorA</span>.<span class="hljs-property">value</span>.<span class="hljs-title function_">set</span>(v));
+    orbFolder.<span class="hljs-title function_">addColor</span>(settings, <span class="hljs-string">&#x27;orbB&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;colour B&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> orbUniforms.<span class="hljs-property">uColorB</span>.<span class="hljs-property">value</span>.<span class="hljs-title function_">set</span>(v));
+    orbFolder.<span class="hljs-title function_">addColor</span>(settings, <span class="hljs-string">&#x27;rim&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;rim colour&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> orbUniforms.<span class="hljs-property">uRimColor</span>.<span class="hljs-property">value</span>.<span class="hljs-title function_">set</span>(v));
+
+    waterFolder.<span class="hljs-title function_">close</span>();
+    orbFolder.<span class="hljs-title function_">close</span>();
+    <span class="hljs-keyword">if</span> (innerWidth &lt; <span class="hljs-number">700</span>) gui.<span class="hljs-title function_">close</span>();
+
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">onResize</span>(<span class="hljs-params"></span>) {
+      camera.<span class="hljs-property">aspect</span> = innerWidth / innerHeight;
+      camera.<span class="hljs-title function_">updateProjectionMatrix</span>();
+      renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+      renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    }
+    <span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;resize&#x27;</span>, onResize);
+
+    <span class="hljs-keyword">const</span> timer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Timer</span>();
+
+    renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">time</span>) =&gt;</span> {
+      timer.<span class="hljs-title function_">update</span>(time);
+      uniforms.<span class="hljs-property">uTime</span>.<span class="hljs-property">value</span> += timer.<span class="hljs-title function_">getDelta</span>() * settings.<span class="hljs-property">speed</span>;
+      <span class="hljs-keyword">const</span> t = uniforms.<span class="hljs-property">uTime</span>.<span class="hljs-property">value</span>;
+
+      <span class="hljs-comment">// Ripples fade out over about two seconds after the pointer stops</span>
+      <span class="hljs-keyword">const</span> idle = (performance.<span class="hljs-title function_">now</span>() - lastMove) / <span class="hljs-number">1000</span>;
+      uniforms.<span class="hljs-property">uRipple</span>.<span class="hljs-property">value</span> = settings.<span class="hljs-property">ripples</span> * <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">exp</span>(-idle * <span class="hljs-number">1.5</span>);
+
+      <span class="hljs-comment">// The orb floats and turns slowly</span>
+      orb.<span class="hljs-property">position</span>.<span class="hljs-property">y</span> = <span class="hljs-number">1.15</span> + <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">sin</span>(t * <span class="hljs-number">0.9</span>) * <span class="hljs-number">0.12</span>;
+      orb.<span class="hljs-property">rotation</span>.<span class="hljs-property">y</span> = t * <span class="hljs-number">0.15</span>;
+
+      controls.<span class="hljs-title function_">update</span>();
+      renderer.<span class="hljs-title function_">render</span>(scene, camera);
+    });
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">body</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">html</span>&gt;</span>
+</code></pre>
+<p>The step-by-step versions are in the repo too: <a href="/3d-tutorial/demos/part-4/step-1.html">step-1.html</a> (first shader, UVs, a UV grid), <a href="/3d-tutorial/demos/part-4/step-2.html">step-2.html</a> (uniforms: time, mouse and colours), <a href="/3d-tutorial/demos/part-4/step-3.html">step-3.html</a> (vertex waves), <a href="/3d-tutorial/demos/part-4/step-4.html">step-4.html</a> (gradient, noise and fresnel), <a href="/3d-tutorial/demos/part-4/step-5.html">step-5.html</a> (<code>onBeforeCompile</code> and shadows) and <a href="/3d-tutorial/demos/part-4/step-6.html">step-6.html</a> (the same waves in TSL on <code>WebGPURenderer</code>).</p>
+<p>The value noise follows a widely shared public-domain pattern (a hash on the integer grid, blended with a smoothstep curve), the same idea Inigo Quilez and The Book of Shaders explain in detail.</p>
+<h2>A few things to try</h2>
+<ul>
+<li>In step 1, change <code>8.0</code> in the grid to <code>20.0</code>, then replace <code>step</code> with <code>smoothstep(0.0, 0.06, ...)</code> and see the lines soften.</li>
+<li>In step 2, replace the gradient with <code>0.5 + 0.5 * cos(uTime + vUv.xyx * 3.0 + vec3(0, 2, 4))</code>. That one line is a whole rainbow palette.</li>
+<li>In step 3, add a third wave running diagonally, <code>sin((p.x + p.y) * uFrequency * 1.7 + uTime)</code>, and switch on the wireframe to see the vertices move.</li>
+<li>In the final demo, set the debug view to &quot;normals&quot; and turn choppiness up and down. Then set it to &quot;elevation&quot; and change the amplitude.</li>
+<li>In step 5, change <code>twistAngle</code> to <code>uTwist * sin(uTime + position.y * 2.0)</code> for a wobble instead of a twist. The shadow should follow, as long as &quot;patch shadow too&quot; is on.</li>
+<li>Open the GLSL of any built-in material: <code>material.onBeforeCompile = (shader) =&gt; console.log(shader.fragmentShader)</code>. It is long, but you now know how to read it.</li>
+</ul>
+<h2>Next time</h2>
+<p>We can now write our own shaders: move vertices, colour pixels, react to time and the mouse, and splice our code into Three.js's own materials. Everything here ran on WebGL. In Part 5 we move to its successor: <strong>WebGPU and TSL</strong>. We will set up <code>WebGPURenderer</code>, rebuild materials as node graphs, see what TSL compiles to, and use the one thing WebGL never had, compute shaders, to move many thousands of particles on the GPU. A reader asked for a WebGPU chapter, and step 6 above was the trailer. See you there.</p>
+</div>
+  <nav class="pager"><a href="/3d-tutorial/part-3-models-shadows-environment/">← Part 3: Models, Light and Shadows</a><span class="soon-next">Next: Part 5, WebGPU and TSL (coming soon)</span></nav>
+  <aside class="support" aria-label="Support the series">
+  <p>This series is free. If it helped you, you can support it with a coffee.</p>
+  <div class="support-links"><a class="support-img" href="https://www.buymeacoffee.com/iodiot" target="_blank" rel="noopener" title="Buy Me a Coffee"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height:50px;width:181px" loading="lazy"></a></div>
+</aside>
+</article>
+</main>
+<footer class="foot"><p>© Mike Smahin · <a href="https://github.com/iodiot/3d-tutorial" target="_blank" rel="noopener">source on GitHub</a></p></footer>
+<script data-goatcounter="https://iodiot.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>
