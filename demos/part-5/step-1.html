@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 1 · WebGPURenderer: async init, backends and feature detection</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+    .panel a { color: #7cf5d4; }
+    .hint { position: absolute; left: 12px; bottom: 12px; font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; pointer-events: none; }
+    .label { position: absolute; transform: translate(-50%, 0); font: 600 12px/1.3 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .8); border: 1px solid #3a4258; border-radius: 6px; padding: 3px 7px; white-space: nowrap; pointer-events: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel">Starting WebGPURenderer…</div>
+  <div class="hint">Drag to orbit · add ?backend=webgl to the URL to force the fallback</div>
+  <script type="module">
+    import * as THREE from 'three/webgpu';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(0, 0.8, 6.6);
+
+    // Feature detection, before we even create the renderer: is there a WebGPU API, and a GPU behind it?
+    const hasApi = 'gpu' in navigator;
+    const adapter = hasApi ? await navigator.gpu.requestAdapter() : null;
+    const adapterText = adapter ? ((adapter.info && (adapter.info.description || adapter.info.architecture || adapter.info.vendor)) || 'yes') : 'none';
+
+    // WebGPU if the browser has it, WebGL 2 if not. ?backend=webgl forces the fallback.
+    const params = new URLSearchParams(location.search);
+    const status = document.getElementById('status');
+
+    const renderer = new THREE.WebGPURenderer({ antialias: true, forceWebGL: params.get('backend') === 'webgl' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    try {
+      await renderer.init();   // async: asks the browser for a GPU device, or falls back
+    } catch (error) {
+      status.textContent = 'Sorry: this browser has neither WebGPU nor WebGL 2.\n' + error.message;
+      throw error;
+    }
+    const isWebGPU = renderer.backend.isWebGPUBackend === true;
+    const backendName = isWebGPU ? 'WebGPU (TSL compiled to WGSL)' : 'WebGL 2 fallback (TSL compiled to GLSL)';
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // The same lit material as in Part 3, as a node material
+    const material = new THREE.MeshStandardNodeMaterial({ color: '#ff8a4c', roughness: 0.35, metalness: 0.1 });
+    const knot = new THREE.Mesh(new THREE.TorusKnotGeometry(1, 0.34, 220, 32), material);
+    scene.add(knot);
+
+    const sun = new THREE.DirectionalLight(0xffffff, 3);
+    sun.position.set(3, 4, 2);
+    scene.add(sun, new THREE.HemisphereLight(0x9ec5ff, 0x1b1f2a, 1.2));
+
+    // Optional GPU features are read from the adapter itself (renderer.hasFeature() also says yes on the WebGL fallback)
+    const features = ['timestamp-query', 'float32-filterable', 'texture-compression-bc'];
+    status.textContent = [
+      'WebGPURenderer · init() finished',
+      '',
+      'navigator.gpu        : ' + (hasApi ? 'present' : 'missing'),
+      'GPU adapter          : ' + adapterText,
+      'chosen backend       : ' + backendName,
+      ...features.map((f) => (f + ' ').padEnd(21, ' ') + ': ' + (adapter ? adapter.features.has(f) : false)),
+      'pixel ratio          : ' + renderer.getPixelRatio(),
+    ].join('\n');
+
+    const gui = new GUI({ title: 'Step 1' });
+    const settings = {
+      'reload with WebGPU': () => { params.delete('backend'); location.search = params.toString(); },
+      'reload with WebGL 2': () => { params.set('backend', 'webgl'); location.search = params.toString(); },
+    };
+    gui.add(settings, 'reload with WebGPU');
+    gui.add(settings, 'reload with WebGL 2');
+    if (innerWidth < 700) gui.close();
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    renderer.setAnimationLoop((time) => {
+      knot.rotation.y = time / 4000;
+      knot.rotation.x = time / 7000;
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

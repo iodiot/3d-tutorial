@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Three.js from Scratch, Part 5: WebGPU and TSL — Mike Smahin</title>
+<meta name="description" content="Switch Three.js to WebGPURenderer: async init and the automatic WebGL 2 fallback, node materials, and TSL, the JavaScript shading language that compiles to WGSL or GLSL. Port the Part 4 waves and fresnel rim to TSL, read the generated shaders, and move 40,000 particles on the GPU with a compute shader. With diagrams, screenshots and a live demo.">
+<link rel="canonical" href="https://iodiot.github.io/3d-tutorial/part-5-webgpu-tsl/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Three.js from Scratch, Part 5: WebGPU and TSL — Mike Smahin">
+<meta property="og:description" content="Switch Three.js to WebGPURenderer: async init and the automatic WebGL 2 fallback, node materials, and TSL, the JavaScript shading language that compiles to WGSL or GLSL. Port the Part 4 waves and fresnel rim to TSL, read the generated shaders, and move 40,000 particles on the GPU with a compute shader. With diagrams, screenshots and a live demo.">
+<meta property="og:url" content="https://iodiot.github.io/3d-tutorial/part-5-webgpu-tsl/">
+<meta property="og:image" content="https://iodiot.github.io/3d-tutorial/images/part-5/social-card.png">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="675">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d12'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' text-anchor='middle' fill='%237cf5d4'%3E3D%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/3d-tutorial/assets/style.css?v=2">
+</head>
+<body>
+<div class="bg"></div>
+<header class="nav">
+  <a class="brand" href="/">Mike Smahin</a>
+  <nav>
+    <a href="/3d-tutorial/">3D Tutorial</a>
+    <a href="/blog/">Blog</a>
+    <a href="/">Portfolio</a>
+  </nav>
+</header>
+<main>
+<article class="post">
+  <header class="post-head">
+    <p class="eyebrow"><a href="/3d-tutorial/">← Three.js from Scratch · all parts</a></p>
+    <h1>Three.js from Scratch, Part 5: WebGPU and TSL</h1>
+    <p class="meta-line"><time datetime="2026-10-27">Oct 27, 2026</time> · Mike Smahin</p>
+    <ul class="tags"><li class="topic">part 5</li><li>three.js</li><li>webgpu</li><li>tsl</li><li>compute</li></ul>
+  </header>
+  <div class="prose"><p>In <a href="/3d-tutorial/part-4-shaders/">Part 4</a> we wrote shaders by hand: GLSL strings inside a <code>ShaderMaterial</code>, patched into Three.js materials with <code>onBeforeCompile</code>. It works, and it will keep working for years. But the platform underneath it is changing. WebGL, the API behind everything we have built so far, is a design from 2011. Its successor, <strong>WebGPU</strong>, is now shipped in Chrome, Edge and Safari, and is rolling out in Firefox. It is faster to drive from JavaScript, it maps better onto how modern GPUs work, and it adds something WebGL never had: <strong>compute shaders</strong>, programs that run on the GPU without drawing anything.</p>
+<p>Three.js has a renderer for it, <code>WebGPURenderer</code>, and a new way of writing shaders that goes with it, <strong>TSL</strong> (Three.js Shading Language). A reader on X asked me for a chapter on exactly this, and step 6 of the last part was the trailer. Here is the full film. We start by switching the renderer, then rebuild the water and the glowing orb from Part 4 as TSL node graphs, look at the shader code TSL generates for us, and finish with the part that is new to everyone: a swarm of 40,000 particles simulated entirely on the GPU. Drag the orb's sparks around with your pointer, and open the panel to change the numbers:</p>
+<div class="demo">
+  <iframe src="/3d-tutorial/demos/part-5/" title="Live demo: a dark teal ocean whose waves are computed by TSL nodes, with a glowing noise orb floating above it and forty thousand tiny sparks orbiting the orb, simulated by a compute shader. A panel has sliders for the water, the orb and the particles." loading="lazy"></iframe>
+</div>
+<p class="demo-links"><a href="/3d-tutorial/demos/part-5/" target="_blank" rel="noopener">Open the demo full screen ↗</a> · <a href="https://github.com/iodiot/3d-tutorial/tree/main/demos/part-5" target="_blank" rel="noopener">Source on GitHub ↗</a></p>
+<blockquote>
+<p>As before, everything uses Three.js <strong>r186</strong> (npm version <code>0.186.1</code>), but the import map changes: <code>three</code> and <code>three/webgpu</code> now both point at the <strong>WebGPU build</strong> (<code>three.webgpu.js</code>), and a new <code>three/tsl</code> entry gives you the shader nodes. Every step is one HTML file you can open from the repo or straight from disk. If your browser has no WebGPU, you will not see an error: each demo says which backend it picked, and falls back to WebGL 2. Add <code>?backend=webgl</code> to any demo's URL to force the fallback and compare.</p>
+</blockquote>
+<h2>Why bother with WebGPU?</h2>
+<p>If WebGL works, why change? Four reasons, from most to least practical:</p>
+<ol>
+<li><strong>Compute shaders.</strong> WebGL can only run code as part of drawing triangles. WebGPU can run general-purpose GPU programs: simulate particles, run a physics step, build a texture, cull objects. This is the headline feature and the reason this article ends where it does.</li>
+<li><strong>Less CPU overhead.</strong> WebGL is a global state machine: every call changes hidden state, and the driver checks it again and again. WebGPU records commands into objects, validates them once, and submits them in batches. For scenes with many objects, that leaves more of your frame time for your own code.</li>
+<li><strong>A modern shading language and one pipeline model.</strong> WGSL replaces GLSL, and the pipeline objects you create up front are what the GPU actually runs.</li>
+<li><strong>It is where Three.js is heading.</strong> New renderer features, such as the node-based post-processing we will meet in the next part, are built for <code>WebGPURenderer</code> first.</li>
+</ol>
+<p>None of this makes WebGL obsolete. As of this writing, WebGPU is enabled by default in Chrome and Edge 113 and later on Windows, macOS, ChromeOS and Android, and in Safari 26 on Apple's platforms. Firefox ships it on some platforms, and Linux support is still being rolled out. <a href="https://caniuse.com/webgpu" target="_blank" rel="noopener">caniuse.com/webgpu</a> has the current table. The point of <code>WebGPURenderer</code> is that you do not have to choose: it uses WebGPU where it can and WebGL 2 where it cannot, with the same scene and the same code.</p>
+<h2>Step 1: WebGPURenderer, and which backend you got</h2>
+<p>The renderer is a drop-in replacement for the one we have used so far, with one big difference: <strong>it starts asynchronously</strong>. Asking the browser for a GPU device takes a moment and can fail, so you must wait for it before rendering:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/webgpu&#x27;</span>;
+
+<span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGPURenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span> });
+renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+<span class="hljs-variable language_">document</span>.<span class="hljs-property">body</span>.<span class="hljs-title function_">appendChild</span>(renderer.<span class="hljs-property">domElement</span>);
+
+<span class="hljs-keyword">await</span> renderer.<span class="hljs-title function_">init</span>();   <span class="hljs-comment">// picks WebGPU, or falls back to WebGL 2</span>
+</code></pre>
+<p>Top-level <code>await</code> works in an ES module (<code>&lt;script type=&quot;module&quot;&gt;</code>), which is what all our demos use. After that, the rest of the code is what you already know: <code>renderer.setAnimationLoop(...)</code>, <code>renderer.render(scene, camera)</code>, the same cameras, lights, meshes and controls.</p>
+<p>What does <code>init()</code> do? It runs a short checklist and takes the first path that works:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-5/renderer-backends.svg" alt="Diagram. Your code, which creates a WebGPURenderer and awaits init(), is the same on every browser. init() asks the browser three questions: is there a navigator.gpu, does requestAdapter() find a GPU, does requestDevice() give a device. If all answers are yes, the WebGPU backend is used: TSL compiles to WGSL and compute shaders run natively. If any answer is no, the WebGL 2 backend is used: TSL compiles to GLSL ES 3.0 and compute is emulated and slower. If there is no WebGL 2 either, init() rejects, so catch it and show a message. A footer says renderer.backend.isWebGPUBackend tells you which backend you got." width="880" height="400" loading="lazy">
+</figure>
+<p>To find out which backend you are on, read <code>renderer.backend.isWebGPUBackend</code>. If you want to force the fallback, say to test it, pass <code>forceWebGL: true</code> to the constructor. And because <code>init()</code> can reject when the browser has neither API, wrap it:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> params = <span class="hljs-keyword">new</span> <span class="hljs-title class_">URLSearchParams</span>(location.<span class="hljs-property">search</span>);
+<span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGPURenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span>, <span class="hljs-attr">forceWebGL</span>: params.<span class="hljs-title function_">get</span>(<span class="hljs-string">&#x27;backend&#x27;</span>) === <span class="hljs-string">&#x27;webgl&#x27;</span> });
+
+<span class="hljs-keyword">try</span> {
+  <span class="hljs-keyword">await</span> renderer.<span class="hljs-title function_">init</span>();
+} <span class="hljs-keyword">catch</span> (error) {
+  <span class="hljs-title function_">showMessage</span>(<span class="hljs-string">&#x27;Sorry: this browser has neither WebGPU nor WebGL 2.&#x27;</span>);   <span class="hljs-comment">// your own UI</span>
+  <span class="hljs-keyword">throw</span> error;
+}
+
+<span class="hljs-keyword">const</span> isWebGPU = renderer.<span class="hljs-property">backend</span>.<span class="hljs-property">isWebGPUBackend</span> === <span class="hljs-literal">true</span>;
+</code></pre>
+<p>That <code>?backend=webgl</code> switch is in every demo of this article. Open any of them twice, once with and once without it, and the picture will be the same.</p>
+<p>You may also want to know <em>before</em> creating the renderer whether there is a real GPU behind the API, or which optional features it offers (timestamp queries for profiling, compressed texture formats, and so on). Ask the browser directly:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> hasApi = <span class="hljs-string">&#x27;gpu&#x27;</span> <span class="hljs-keyword">in</span> navigator;
+<span class="hljs-keyword">const</span> adapter = hasApi ? <span class="hljs-keyword">await</span> navigator.<span class="hljs-property">gpu</span>.<span class="hljs-title function_">requestAdapter</span>() : <span class="hljs-literal">null</span>;   <span class="hljs-comment">// null: no usable GPU</span>
+<span class="hljs-keyword">const</span> hasTimestamps = adapter ? adapter.<span class="hljs-property">features</span>.<span class="hljs-title function_">has</span>(<span class="hljs-string">&#x27;timestamp-query&#x27;</span>) : <span class="hljs-literal">false</span>;
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-5/step-1-backend.webp" alt="Screenshot: a glossy orange torus knot on a dark background. A panel at the top left lists: WebGPURenderer init() finished, navigator.gpu present, the GPU adapter, chosen backend WebGPU (TSL compiled to WGSL), three optional features with true or false values, and the pixel ratio." width="960" height="600" loading="lazy">
+  <figcaption>Step 1: the Part 3 material on a torus knot, now drawn by <code>WebGPURenderer</code>, with a panel that reports the checklist. Two buttons reload the page on either backend. This screenshot was taken on WebGPU. (<a href="/3d-tutorial/demos/part-5/step-1.html" target="_blank" rel="noopener">step-1.html</a>)</figcaption>
+</figure>
+<p>One trap here: <code>renderer.hasFeature('timestamp-query')</code> looks like the same question, but it can answer <code>true</code> on the WebGL fallback too. For &quot;does this <em>browser</em> have WebGPU feature X&quot;, read the adapter as above.</p>
+<h2>Step 2: node materials</h2>
+<p>Notice what changed in step 1's material: <code>MeshStandardNodeMaterial</code> instead of <code>MeshStandardMaterial</code>. With <code>WebGPURenderer</code>, materials are built from <strong>nodes</strong>. A node is a small piece of shader: &quot;this colour&quot;, &quot;that texture sampled at these UVs&quot;, &quot;the camera position&quot;, &quot;A times B&quot;. A material is a set of slots, and each slot holds a node graph. Every material in Part 2 has a node twin with the same options:</p>
+<table>
+<thead>
+<tr>
+<th>Classic material</th>
+<th>Node material</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MeshBasicMaterial</code></td>
+<td><code>MeshBasicNodeMaterial</code></td>
+</tr>
+<tr>
+<td><code>MeshLambertMaterial</code></td>
+<td><code>MeshLambertNodeMaterial</code></td>
+</tr>
+<tr>
+<td><code>MeshPhongMaterial</code></td>
+<td><code>MeshPhongNodeMaterial</code></td>
+</tr>
+<tr>
+<td><code>MeshStandardMaterial</code></td>
+<td><code>MeshStandardNodeMaterial</code></td>
+</tr>
+<tr>
+<td><code>MeshPhysicalMaterial</code></td>
+<td><code>MeshPhysicalNodeMaterial</code></td>
+</tr>
+<tr>
+<td><code>MeshToonMaterial</code></td>
+<td><code>MeshToonNodeMaterial</code></td>
+</tr>
+</tbody>
+</table>
+<p>You can create the node versions directly, with the same constructor options (<code>color</code>, <code>roughness</code>, <code>metalness</code>, <code>map</code>, and so on). <strong>Your old materials keep working too</strong>: when <code>WebGPURenderer</code> meets a classic <code>MeshStandardMaterial</code>, it quietly swaps in the matching node material. That is why Parts 1 to 3 would run on this renderer with almost no changes. Step 2 puts seven spheres under one light; the last one is a classic material:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-5/step-2-materials.webp" alt="Screenshot: seven orange spheres in a row on a dark background, labelled Basic, Lambert, Phong, Standard, Physical, Toon and classic Standard. Basic is flat, Lambert and Phong are shaded, Standard and Physical are glossy with the Physical one having a clear coat, Toon has hard bands of light, and the classic Standard looks identical to the Standard sphere." width="960" height="600" loading="lazy">
+  <figcaption>Step 2: the node material family. The sphere on the right is a classic <code>MeshStandardMaterial</code>, converted automatically, and it matches its <code>MeshStandardNodeMaterial</code> neighbour. (<a href="/3d-tutorial/demos/part-5/step-2.html" target="_blank" rel="noopener">step-2.html</a>)</figcaption>
+</figure>
+<p>There is one exception that matters for Part 4 readers. <strong><code>ShaderMaterial</code>, <code>RawShaderMaterial</code> and <code>onBeforeCompile</code> do not work with <code>WebGPURenderer</code>.</strong> They are GLSL, and this renderer has no GLSL to patch: on the WebGPU backend it writes WGSL, and even on the WebGL fallback it builds the shader its own way, from nodes. Your GLSL knowledge is not wasted, because every idea carries over. But the code itself has to be rewritten, and TSL is the tool.</p>
+<h2>Step 3: TSL, a shader written in JavaScript</h2>
+<p>TSL is a library of node constructors. You import what you need from <code>three/tsl</code> and combine nodes with ordinary JavaScript:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { uniform, uv, time, sin, mix, smoothstep } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/tsl&#x27;</span>;
+
+<span class="hljs-keyword">const</span> top = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#7cf5d4&#x27;</span>));
+<span class="hljs-keyword">const</span> bottom = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#5b2bd6&#x27;</span>));
+<span class="hljs-keyword">const</span> stripes = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">14</span>);
+<span class="hljs-keyword">const</span> speed = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">1.5</span>);
+
+<span class="hljs-keyword">const</span> gradient = <span class="hljs-title function_">mix</span>(bottom, top, <span class="hljs-title function_">uv</span>().<span class="hljs-property">y</span>);                                        <span class="hljs-comment">// blend by height on the sphere</span>
+<span class="hljs-keyword">const</span> wave = <span class="hljs-title function_">sin</span>(<span class="hljs-title function_">uv</span>().<span class="hljs-property">x</span>.<span class="hljs-title function_">mul</span>(stripes).<span class="hljs-title function_">mul</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> * <span class="hljs-number">2</span>).<span class="hljs-title function_">add</span>(time.<span class="hljs-title function_">mul</span>(speed)));       <span class="hljs-comment">// -1..1, drifting with time</span>
+<span class="hljs-keyword">const</span> band = <span class="hljs-title function_">smoothstep</span>(<span class="hljs-number">0.55</span>, <span class="hljs-number">0.95</span>, wave);                                        <span class="hljs-comment">// thin bright bands</span>
+<span class="hljs-keyword">const</span> finalColor = <span class="hljs-title function_">mix</span>(gradient, gradient.<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.25</span>), band);                       <span class="hljs-comment">// darken the bands</span>
+
+<span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardNodeMaterial</span>({ <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.4</span>, <span class="hljs-attr">metalness</span>: <span class="hljs-number">0.1</span> });
+material.<span class="hljs-property">colorNode</span> = finalColor;
+</code></pre>
+<p>If you read Part 4, every word here is familiar. <code>mix</code>, <code>sin</code> and <code>smoothstep</code> are the GLSL functions. <code>uv()</code> is the UV attribute we wrote as <code>vUv</code>. <code>time</code> is a built-in uniform: elapsed seconds, advanced by the renderer every frame, so we no longer update <code>uTime</code> ourselves. <code>uniform(14)</code> makes a value you can change from JavaScript while the shader runs: set <code>stripes.value = 20</code> and the stripes change next frame, with no recompiling. The big difference is the arithmetic. JavaScript cannot overload <code>*</code> and <code>+</code> for objects, so you write method calls: <code>a.mul(b)</code>, <code>a.add(b)</code>, <code>a.sub(b)</code>, <code>a.div(b)</code>.</p>
+<p>Nothing in that code computes anything yet. <code>uv().x.mul(stripes)</code> does not multiply two numbers; it creates a <strong>node</strong> that means &quot;multiply these two&quot;. The whole expression is a graph, and the renderer walks it when the material compiles and turns it into shader code. Here is step 3's colour as the graph TSL sees:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-5/node-graph.svg" alt="Diagram of a node graph. On the left, the inputs: uv().y, the uniforms bottom and top, uv().x, the uniform stripes, time and the uniform speed. In the middle, maths nodes: mix of bottom and top by uv().y gives the gradient; uv().x times stripes times 2 pi plus time times speed gives the argument of sin, then smoothstep gives the band. A final mix of the gradient and the gradient times 0.25, by the band, feeds the orange colorNode slot on the right. A legend: yellow is uniforms you change from JavaScript, green is built-in nodes, purple is maths, orange is the material slot that receives the result." width="880" height="430" loading="lazy">
+</figure>
+<figure>
+  <img src="/3d-tutorial/images/part-5/step-3-stripes.webp" alt="Screenshot: a sphere with a gradient from violet at the bottom to mint green at the top, crossed by thin dark vertical stripes. A panel says colorNode = mix(gradient, darker, bands), running on WebGPU." width="960" height="600" loading="lazy">
+  <figcaption>Step 3: a colour built from nodes. The sliders change the <code>uniform</code>s: the stripes drift because of <code>time</code>, and the whole graph runs on the GPU. (<a href="/3d-tutorial/demos/part-5/step-3.html" target="_blank" rel="noopener">step-3.html</a>)</figcaption>
+</figure>
+<p>TSL has a small vocabulary of its own for things GLSL gave you as built-in variables. These are the ones used in this article:</p>
+<table>
+<thead>
+<tr>
+<th>GLSL (Part 4)</th>
+<th>TSL</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>uniform float uAmp;</code></td>
+<td><code>const amp = uniform(0.25);</code></td>
+<td>change it with <code>amp.value = …</code></td>
+</tr>
+<tr>
+<td><code>uTime</code></td>
+<td><code>time</code></td>
+<td>built in, seconds</td>
+</tr>
+<tr>
+<td><code>vUv</code></td>
+<td><code>uv()</code></td>
+<td>the UV attribute</td>
+</tr>
+<tr>
+<td><code>position</code></td>
+<td><code>positionLocal</code></td>
+<td>model space; <code>positionWorld</code>, <code>positionView</code> exist too</td>
+</tr>
+<tr>
+<td><code>normal</code></td>
+<td><code>normalLocal</code></td>
+<td><code>normalView</code> and <code>normalWorld</code> too</td>
+</tr>
+<tr>
+<td><code>a * b + c</code></td>
+<td><code>a.mul(b).add(c)</code></td>
+<td>also <code>sub</code>, <code>div</code>, <code>pow</code>, <code>negate</code></td>
+</tr>
+<tr>
+<td><code>clamp(x, 0.0, 1.0)</code></td>
+<td><code>x.saturate()</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>dot(a, b)</code>, <code>normalize(v)</code></td>
+<td><code>a.dot(b)</code>, <code>v.normalize()</code></td>
+<td>the function form also works: <code>normalize(v)</code></td>
+</tr>
+<tr>
+<td><code>mix</code>, <code>smoothstep</code>, <code>sin</code></td>
+<td><code>mix</code>, <code>smoothstep</code>, <code>sin</code></td>
+<td>same names, imported from <code>three/tsl</code></td>
+</tr>
+<tr>
+<td><code>varying</code></td>
+<td><code>varying(node)</code></td>
+<td>per-vertex value, blended per pixel</td>
+</tr>
+<tr>
+<td>a helper function</td>
+<td><code>Fn(([x]) =&gt; …)</code></td>
+<td>becomes a function in the shader</td>
+</tr>
+<tr>
+<td><code>if (c) { … }</code></td>
+<td><code>If(c, () =&gt; { … })</code></td>
+<td>a shader <code>if</code>, not a JavaScript one</td>
+</tr>
+</tbody>
+</table>
+<p>Two habits to build early. First, a plain JavaScript number is fine wherever a node is expected (<code>.mul(0.5)</code>), TSL wraps it for you. Second, JavaScript <code>if</code>, <code>for</code> and <code>Math.sin</code> run <strong>once, on the CPU, while you build the graph</strong>. Use <code>If</code>, <code>Loop</code> and <code>sin</code> from TSL when the decision has to happen on the GPU, per pixel or per particle.</p>
+<h2>Where nodes plug in</h2>
+<p>Step 3 assigned a node to <code>colorNode</code>. That is the idea behind the whole system: a node material has <strong>slots</strong>, and each slot takes a node graph that replaces one stage of the built-in material. Leave a slot empty and the material behaves as before.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-5/material-slots.svg" alt="Diagram of the node slots of MeshStandardNodeMaterial. The vertex stage, which runs once per vertex, has positionNode, which decides where each vertex ends up; step 4 lifts the water plane with it and step 5 pushes the orb outward. A varying(node) box passes a value computed per vertex, blended across each triangle, to the fragment stage. The fragment stage, which runs once per pixel, has colorNode for the base colour, normalNode for the normal used by the lighting, emissiveNode for light added on top such as glow and rims, roughnessNode and metalnessNode for the surface response, and opacityNode for transparency. A footer says each slot is optional: leave it empty and the material behaves as in Part 3." width="880" height="430" loading="lazy">
+</figure>
+<p>This is a big step up from <code>onBeforeCompile</code>. In Part 4, we had to find a chunk name such as <code>begin_vertex</code> in Three.js's internal GLSL and <code>.replace</code> a string inside it. Here <code>material.positionNode = …</code> is a public, documented property. The lighting, shadows and fog still come from the material; you only replace the pieces you care about.</p>
+<h2>Step 4: porting the waves</h2>
+<p>Let us rebuild the vertex waves of Part 4 as nodes. The GLSL version added sine waves to <code>position.z</code>, rebuilt the normal by finite differences, and passed the height to the fragment shader through a varying. We need the same four things, and each maps onto one slot:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">Fn</span>, uniform, time, positionLocal, vec2, vec3, sin, mix, smoothstep,
+         normalize, varying, transformNormalToView } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/tsl&#x27;</span>;
+
+<span class="hljs-keyword">const</span> amplitude = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.25</span>);
+<span class="hljs-keyword">const</span> frequency = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">3.0</span>);
+<span class="hljs-keyword">const</span> speed = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">1.0</span>);
+<span class="hljs-keyword">const</span> deep = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#0b3d91&#x27;</span>));
+<span class="hljs-keyword">const</span> crest = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#7cf5d4&#x27;</span>));
+
+<span class="hljs-comment">// Fn() wraps a function so it becomes a reusable piece of shader.</span>
+<span class="hljs-comment">// Give it a point on the plane, get the height of the water there.</span>
+<span class="hljs-keyword">const</span> waveHeight = <span class="hljs-title class_">Fn</span>(<span class="hljs-function">(<span class="hljs-params">[p]</span>) =&gt;</span> {
+  <span class="hljs-keyword">const</span> t = time.<span class="hljs-title function_">mul</span>(speed);
+  <span class="hljs-keyword">const</span> a = <span class="hljs-title function_">sin</span>(p.<span class="hljs-property">x</span>.<span class="hljs-title function_">mul</span>(frequency).<span class="hljs-title function_">add</span>(t));
+  <span class="hljs-keyword">const</span> b = <span class="hljs-title function_">sin</span>(p.<span class="hljs-property">y</span>.<span class="hljs-title function_">mul</span>(frequency).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.8</span>).<span class="hljs-title function_">add</span>(t.<span class="hljs-title function_">mul</span>(<span class="hljs-number">1.3</span>)));
+  <span class="hljs-keyword">return</span> a.<span class="hljs-title function_">add</span>(b).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.5</span>).<span class="hljs-title function_">mul</span>(amplitude);
+});
+
+<span class="hljs-comment">// Vertex stage: lift every vertex of the plane by waveHeight</span>
+<span class="hljs-keyword">const</span> p = positionLocal.<span class="hljs-property">xy</span>;
+<span class="hljs-keyword">const</span> h = <span class="hljs-title function_">waveHeight</span>(p);
+
+<span class="hljs-comment">// Normals by finite differences, like in Part 4: sample the height a tiny step away along x and y.</span>
+<span class="hljs-comment">// The plane lies in the xy plane, so its normal points along +z.</span>
+<span class="hljs-keyword">const</span> e = <span class="hljs-number">0.01</span>;
+<span class="hljs-keyword">const</span> hx = <span class="hljs-title function_">waveHeight</span>(p.<span class="hljs-title function_">add</span>(<span class="hljs-title function_">vec2</span>(e, <span class="hljs-number">0</span>)));
+<span class="hljs-keyword">const</span> hy = <span class="hljs-title function_">waveHeight</span>(p.<span class="hljs-title function_">add</span>(<span class="hljs-title function_">vec2</span>(<span class="hljs-number">0</span>, e)));
+<span class="hljs-keyword">const</span> slope = <span class="hljs-title function_">normalize</span>(<span class="hljs-title function_">vec3</span>(h.<span class="hljs-title function_">sub</span>(hx), h.<span class="hljs-title function_">sub</span>(hy), e));
+
+<span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardNodeMaterial</span>({ <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.22</span>, <span class="hljs-attr">metalness</span>: <span class="hljs-number">0.0</span> });
+material.<span class="hljs-property">positionNode</span> = positionLocal.<span class="hljs-title function_">add</span>(<span class="hljs-title function_">vec3</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>, h));
+material.<span class="hljs-property">normalNode</span> = <span class="hljs-title function_">transformNormalToView</span>(<span class="hljs-title function_">varying</span>(slope)).<span class="hljs-title function_">normalize</span>();
+material.<span class="hljs-property">colorNode</span> = <span class="hljs-title function_">mix</span>(deep, crest, <span class="hljs-title function_">smoothstep</span>(amplitude.<span class="hljs-title function_">mul</span>(-<span class="hljs-number">0.2</span>), amplitude.<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.9</span>), <span class="hljs-title function_">varying</span>(h)));
+</code></pre>
+<p>Read it top to bottom and compare with the GLSL of Part 4:</p>
+<ul>
+<li><strong><code>Fn</code></strong> is how you write a helper function. It is called like a normal JavaScript function, <code>waveHeight(p)</code>, but each call inserts the same math into the shader. We call it three times (the point itself and two neighbours), and the finite-difference normal costs nothing extra to write.</li>
+<li><strong><code>positionNode</code></strong> replaces the vertex position. We take the original <code>positionLocal</code> and add the height on its z axis, exactly what <code>transformed.z += …</code> did.</li>
+<li><strong><code>varying(h)</code></strong> is the same idea as a GLSL <code>varying</code>: compute at the vertices, interpolate across each triangle, read per pixel. TSL often inserts varyings for you where a value is used in the fragment stage, but wrapping a value in <code>varying(...)</code> makes the choice explicit and guarantees it is computed in the cheaper vertex stage.</li>
+<li><strong><code>colorNode</code></strong> is a <code>mix</code> between two colours by the height, a <code>smoothstep</code> of it.</li>
+<li><strong><code>normalNode</code></strong> is where a gotcha lives. Our finite-difference normal is in the plane's <em>local</em> space, but the lighting code of a node material expects a normal in <strong>view space</strong> (relative to the camera). So we convert it with <code>transformNormalToView(...)</code>. Skip that line and the lighting will look wrong in a way that is hard to diagnose: the shading would not follow the waves, or would swim as the camera moves.</li>
+</ul>
+<figure>
+  <img src="/3d-tutorial/images/part-5/step-4-waves.webp" alt="Screenshot: a square patch of water seen from above at an angle, rolling in soft waves. Crests are mint green, troughs deep blue, with smooth shading across the surface. A panel says positionNode + normalNode + colorNode, running on WebGPU, and a lil-gui panel has amplitude, frequency, speed and wireframe controls." width="960" height="600" loading="lazy">
+  <figcaption>Step 4: the waves of Part 4 as TSL. A vertex displacement, a hand-made normal and a colour ramp, each in its own material slot. (<a href="/3d-tutorial/demos/part-5/step-4.html" target="_blank" rel="noopener">step-4.html</a>)</figcaption>
+</figure>
+<p>Switch on the <code>wireframe</code> box in the panel to see the vertices move, and drag the amplitude slider. That slider is a <code>uniform</code>, so the change is instant. Because the material is a lit <code>MeshStandardNodeMaterial</code>, the waves also respond to the lights, shadows and environment maps of Part 3, which in the <code>ShaderMaterial</code> version we would have had to write ourselves.</p>
+<h2>Step 5: noise and a fresnel rim</h2>
+<p>The second effect of Part 4 was the glowing orb: noise that wobbles the outline, a noise-driven colour, and a fresnel rim. In TSL it is shorter than in GLSL, because Three.js ships a noise library as nodes. Here is the whole thing:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">Fn</span>, uniform, time, mix, oneMinus, normalView, normalLocal, positionLocal,
+         positionViewDirection, mx_fractal_noise_float } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/tsl&#x27;</span>;
+
+<span class="hljs-comment">// Fresnel: surfaces seen at a grazing angle glow. 0 when facing the camera, 1 at the silhouette.</span>
+<span class="hljs-keyword">const</span> fresnel = <span class="hljs-title class_">Fn</span>(<span class="hljs-function">(<span class="hljs-params">[exponent]</span>) =&gt;</span> {
+  <span class="hljs-keyword">const</span> facing = normalView.<span class="hljs-title function_">dot</span>(positionViewDirection).<span class="hljs-title function_">saturate</span>();
+  <span class="hljs-keyword">return</span> <span class="hljs-title function_">oneMinus</span>(facing).<span class="hljs-title function_">pow</span>(exponent);
+});
+
+<span class="hljs-comment">// Fractal noise, evaluated at the vertex position and slowly moving through 3D space</span>
+<span class="hljs-keyword">const</span> noise = <span class="hljs-title function_">mx_fractal_noise_float</span>(positionLocal.<span class="hljs-title function_">mul</span>(<span class="hljs-number">1.4</span>).<span class="hljs-title function_">add</span>(time.<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.3</span>)), <span class="hljs-number">3</span>, <span class="hljs-number">2.0</span>, <span class="hljs-number">0.5</span>);
+
+<span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardNodeMaterial</span>({ <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.5</span>, <span class="hljs-attr">metalness</span>: <span class="hljs-number">0.0</span> });
+material.<span class="hljs-property">positionNode</span> = positionLocal.<span class="hljs-title function_">add</span>(normalLocal.<span class="hljs-title function_">mul</span>(noise.<span class="hljs-title function_">mul</span>(wobble)));   <span class="hljs-comment">// push vertices along their normals</span>
+material.<span class="hljs-property">colorNode</span> = <span class="hljs-title function_">mix</span>(inner, outer, noise.<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.5</span>).<span class="hljs-title function_">add</span>(<span class="hljs-number">0.5</span>));
+material.<span class="hljs-property">emissiveNode</span> = rimColor.<span class="hljs-title function_">mul</span>(<span class="hljs-title function_">fresnel</span>(power)).<span class="hljs-title function_">mul</span>(rimStrength);           <span class="hljs-comment">// glow added on top of the lighting</span>
+</code></pre>
+<ul>
+<li><code>mx_fractal_noise_float</code> comes from the MaterialX noise functions that ship with Three.js (the <code>mx_</code> prefix). The arguments are the 3D position to sample, the number of octaves (3), the lacunarity (2.0, how much finer each octave is) and the gain (0.5, how much weaker each octave is). It is the same fbm idea as the hand-written noise of Part 4, in one call.</li>
+<li><code>normalView</code> and <code>positionViewDirection</code> are built-in nodes: the surface normal and the direction to the camera, both in view space. Their dot product is the &quot;how directly are we looking at this surface&quot; number that fresnel is built on. Same maths as Part 4, new spelling.</li>
+<li><code>emissiveNode</code> is the right slot for a rim. Emissive light is added <strong>after</strong> the lighting, so the glow stays bright on the shadowed side too.</li>
+</ul>
+<figure>
+  <img src="/3d-tutorial/images/part-5/step-5-fresnel.webp" alt="Screenshot: a lumpy orange sphere with darker red patches, outlined by a mint-green glowing rim. A panel says emissiveNode = rimColor * fresnel(power), running on WebGPU." width="960" height="600" loading="lazy">
+  <figcaption>Step 5: noise displacement in <code>positionNode</code>, noise colour in <code>colorNode</code> and a fresnel rim in <code>emissiveNode</code>. (<a href="/3d-tutorial/demos/part-5/step-5.html" target="_blank" rel="noopener">step-5.html</a>)</figcaption>
+</figure>
+<p>A caveat that is the same in GLSL and TSL: displacing vertices does <strong>not</strong> recompute the normals. The lighting on the orb still thinks it is lit as a perfect sphere, so the bumps are visible in the outline but shaded smoothly. For a small wobble that looks fine, and the colour noise hides it. For a large displacement, do what we did for the water: compute the displaced normal yourself and put it in <code>normalNode</code>.</p>
+<h2>What TSL actually generates</h2>
+<p>TSL is not magic, and the best way to trust it is to read what it produces. The renderer can show you the shader source it built from a graph:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> { vertexShader, fragmentShader } = <span class="hljs-keyword">await</span> renderer.<span class="hljs-property">debug</span>.<span class="hljs-title function_">getShaderAsync</span>(scene, camera, mesh);
+<span class="hljs-variable language_">console</span>.<span class="hljs-title function_">log</span>(fragmentShader);
+</code></pre>
+<p>Step 5 has a &quot;show generated shader&quot; button in its panel that does exactly this and prints the result over the scene. Here is the line that matters, for a tiny material whose colour is <code>mix(warm, blue, sin(uv().y * 8 + time) * 0.5 + 0.5)</code>. The first block is what the <strong>WebGL 2 fallback</strong> produces, in GLSL ES 3.0:</p>
+<pre class="hljs"><code class="language-glsl"><span class="hljs-comment">// generated GLSL (WebGL 2 backend), fragment shader, trimmed</span>
+DiffuseColor = <span class="hljs-type">vec4</span>( <span class="hljs-built_in">mix</span>( nodeUniform0, <span class="hljs-type">vec3</span>( <span class="hljs-number">0.1</span>, <span class="hljs-number">0.2</span>, <span class="hljs-number">0.9</span> ), ( ( <span class="hljs-built_in">sin</span>( ( ( nodeVarying5.y * <span class="hljs-number">8.0</span> ) + nodeUniform1 ) ) * <span class="hljs-number">0.5</span> ) + <span class="hljs-number">0.5</span> ) ), <span class="hljs-number">1.0</span> );
+</code></pre>
+<p>The same graph on the <strong>WebGPU backend</strong> comes out as WGSL:</p>
+<pre class="hljs"><code>// generated WGSL (WebGPU backend), fragment shader, trimmed
+DiffuseColor = vec4&lt;f32&gt;( mix( object.nodeUniform0, vec3&lt;f32&gt;( 0.1, 0.2, 0.9 ), ( ( sin( ( ( nodeVarying5.y * 8.0 ) + render.nodeUniform1 ) ) * 0.5 ) + 0.5 ) ), 1.0 );
+</code></pre>
+<p>Compare the two lines with the graph above and with what you wrote in JavaScript. <code>nodeVarying5</code> is the UV the vertex shader passed on; <code>nodeUniform0</code> is our <code>warm</code> colour and <code>nodeUniform1</code> is <code>time</code>, both read from uniform buffers; the maths is the maths you wrote, in the language the backend speaks. That is the answer to &quot;which language do I write?&quot;: none of them. You write the graph once, and Three.js compiles it to <strong>WGSL for the WebGPU backend</strong> and <strong>GLSL for the WebGL 2 fallback</strong>. Around that one line is a few hundred lines of lighting code, also generated, which is why a lit node material is so much shorter to write than the <code>onBeforeCompile</code> patch from Part 4.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-5/step-5-wgsl.webp" alt="Screenshot: the step 5 orb on the left, partly covered by a panel on the right filled with generated WGSL source code: structs, uniform bindings, private variables and a fragment function named main." width="960" height="600" loading="lazy">
+  <figcaption>The "show generated shader" panel in step 5, on WebGPU: the full fragment shader of the orb as WGSL. (<a href="/3d-tutorial/demos/part-5/step-5.html?shader=1" target="_blank" rel="noopener">step-5.html?shader=1</a>)</figcaption>
+</figure>
+<p>The generated names are machine-made (<code>nodeVar7</code>, <code>nodeUniform0</code>), so this output is for reading and debugging, not editing. If you ever need to drop hand-written code into a graph, TSL has <code>wgslFn</code> and <code>glslFn</code> to wrap a snippet of raw WGSL or GLSL as a node. The price is that the snippet is then tied to one backend, so use it sparingly.</p>
+<h2>Step 6: compute shaders, particles that never leave the GPU</h2>
+<p>Now the feature that WebGL cannot offer. We want 40,000 particles that are attracted to a point, swirl around it and slow down through drag. Done on the CPU, that is a JavaScript loop over 40,000 positions per frame, then uploading the result to the GPU: slow, and it gets worse with every particle you add. A <strong>compute shader</strong> turns the loop inside out. The particle data <strong>lives in GPU memory</strong>, and the GPU runs the update function <strong>once per particle, all in parallel</strong>. JavaScript only says &quot;run it now&quot;:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-5/compute-pipeline.svg" alt="Diagram of a frame with compute. On the left, JavaScript on the CPU does only four things per frame: set dt.value, set attractor.value, call renderer.compute(update), call renderer.render(scene, camera). In the middle, the GPU runs the compute pass, one thread per particle in parallel: instanceIndex runs from 0 to N-1, velocity += force * dt, position += velocity * dt. Beside it, storage buffers positions and velocities, each vec3 times N, stay in GPU memory and nothing is copied back to JavaScript. On the right, the render pass: Sprite.count = N, with a SpriteNodeMaterial whose positionNode is positions.toAttribute(), draws N quads. Numbers 1 and 2 show that compute runs first, then render. A footer says 40,000 particles cost the same CPU work as four." width="940" height="410" loading="lazy">
+</figure>
+<p>Three new pieces make this work:</p>
+<ul>
+<li><strong><code>instancedArray(count, type)</code></strong> creates a <strong>storage buffer</strong>: an array of <code>count</code> items that lives on the GPU, readable and writable by shaders. We need two, one <code>vec3</code> position and one <code>vec3</code> velocity per particle.</li>
+<li><strong><code>Fn(() =&gt; { … })().compute(count)</code></strong> builds a compute node. The function body is a shader that runs <code>count</code> times. Inside it, <strong><code>instanceIndex</code></strong> is the number of the current run: 0 for the first particle, 39,999 for the last. <code>positions.element(instanceIndex)</code> is &quot;my particle&quot;.</li>
+<li><strong><code>renderer.compute(node)</code></strong> runs it. Call it once for a one-time setup pass and every frame for a simulation.</li>
+</ul>
+<p>Here is the core of step 6:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">Fn</span>, instancedArray, instanceIndex, uniform, hash, vec3, float, mix, shapeCircle } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/tsl&#x27;</span>;
+
+<span class="hljs-keyword">const</span> <span class="hljs-variable constant_">COUNT</span> = <span class="hljs-number">40000</span>;
+
+<span class="hljs-comment">// Two buffers that live on the GPU: one vec3 position and one vec3 velocity per particle</span>
+<span class="hljs-keyword">const</span> positions = <span class="hljs-title function_">instancedArray</span>(<span class="hljs-variable constant_">COUNT</span>, <span class="hljs-string">&#x27;vec3&#x27;</span>);
+<span class="hljs-keyword">const</span> velocities = <span class="hljs-title function_">instancedArray</span>(<span class="hljs-variable constant_">COUNT</span>, <span class="hljs-string">&#x27;vec3&#x27;</span>);
+
+<span class="hljs-keyword">const</span> attractor = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>));
+<span class="hljs-keyword">const</span> pull = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">9</span>);
+<span class="hljs-keyword">const</span> swirl = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">7</span>);
+<span class="hljs-keyword">const</span> drag = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.8</span>);
+<span class="hljs-keyword">const</span> dt = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">1</span> / <span class="hljs-number">60</span>);   <span class="hljs-comment">// seconds since the last frame, set from JavaScript</span>
+
+<span class="hljs-comment">// Compute pass 1 (runs once): scatter the particles randomly in a box.</span>
+<span class="hljs-keyword">const</span> init = <span class="hljs-title class_">Fn</span>(<span class="hljs-function">() =&gt;</span> {
+  <span class="hljs-keyword">const</span> position = positions.<span class="hljs-title function_">element</span>(instanceIndex);
+  position.<span class="hljs-title function_">assign</span>(<span class="hljs-title function_">vec3</span>(
+    <span class="hljs-title function_">hash</span>(instanceIndex).<span class="hljs-title function_">sub</span>(<span class="hljs-number">0.5</span>),
+    <span class="hljs-title function_">hash</span>(instanceIndex.<span class="hljs-title function_">add</span>(<span class="hljs-number">1</span>)).<span class="hljs-title function_">sub</span>(<span class="hljs-number">0.5</span>),
+    <span class="hljs-title function_">hash</span>(instanceIndex.<span class="hljs-title function_">add</span>(<span class="hljs-number">2</span>)).<span class="hljs-title function_">sub</span>(<span class="hljs-number">0.5</span>),
+  ).<span class="hljs-title function_">mul</span>(<span class="hljs-number">12</span>));
+})().<span class="hljs-title function_">compute</span>(<span class="hljs-variable constant_">COUNT</span>);
+
+<span class="hljs-comment">// Compute pass 2 (runs every frame): pull towards the attractor, spin around it, move</span>
+<span class="hljs-keyword">const</span> update = <span class="hljs-title class_">Fn</span>(<span class="hljs-function">() =&gt;</span> {
+  <span class="hljs-keyword">const</span> position = positions.<span class="hljs-title function_">element</span>(instanceIndex);
+  <span class="hljs-keyword">const</span> velocity = velocities.<span class="hljs-title function_">element</span>(instanceIndex);
+
+  <span class="hljs-keyword">const</span> toAttractor = attractor.<span class="hljs-title function_">sub</span>(position);
+  <span class="hljs-keyword">const</span> distance = toAttractor.<span class="hljs-title function_">length</span>().<span class="hljs-title function_">max</span>(<span class="hljs-number">0.5</span>);
+  <span class="hljs-keyword">const</span> direction = toAttractor.<span class="hljs-title function_">div</span>(distance);
+
+  <span class="hljs-comment">// sideways push (perpendicular to the direction and to &quot;up&quot;) makes the cloud orbit</span>
+  <span class="hljs-keyword">const</span> sideways = <span class="hljs-title function_">vec3</span>(direction.<span class="hljs-property">z</span>.<span class="hljs-title function_">negate</span>(), <span class="hljs-number">0</span>, direction.<span class="hljs-property">x</span>);
+
+  <span class="hljs-comment">// every particle gets its own strength, so they settle on different orbits instead of one thin ring</span>
+  <span class="hljs-keyword">const</span> strength = <span class="hljs-title function_">hash</span>(instanceIndex.<span class="hljs-title function_">add</span>(<span class="hljs-number">7</span>)).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.9</span>).<span class="hljs-title function_">add</span>(<span class="hljs-number">0.55</span>);
+  <span class="hljs-keyword">const</span> force = direction.<span class="hljs-title function_">mul</span>(pull).<span class="hljs-title function_">add</span>(sideways.<span class="hljs-title function_">mul</span>(swirl)).<span class="hljs-title function_">mul</span>(strength).<span class="hljs-title function_">div</span>(distance.<span class="hljs-title function_">add</span>(<span class="hljs-number">1</span>));
+
+  velocity.<span class="hljs-title function_">addAssign</span>(force.<span class="hljs-title function_">mul</span>(dt));
+  velocity.<span class="hljs-title function_">mulAssign</span>(<span class="hljs-title function_">float</span>(<span class="hljs-number">1</span>).<span class="hljs-title function_">sub</span>(drag.<span class="hljs-title function_">mul</span>(dt)));
+  position.<span class="hljs-title function_">addAssign</span>(velocity.<span class="hljs-title function_">mul</span>(dt));
+})().<span class="hljs-title function_">compute</span>(<span class="hljs-variable constant_">COUNT</span>);
+
+renderer.<span class="hljs-title function_">compute</span>(init);   <span class="hljs-comment">// once</span>
+
+renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">t</span>) =&gt;</span> {
+  dt.<span class="hljs-property">value</span> = <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>((t - lastTime) / <span class="hljs-number">1000</span>, <span class="hljs-number">1</span> / <span class="hljs-number">30</span>);   <span class="hljs-comment">// never take a huge step, e.g. after a tab switch</span>
+  lastTime = t;
+  renderer.<span class="hljs-title function_">compute</span>(update);          <span class="hljs-comment">// 1. simulate on the GPU</span>
+  renderer.<span class="hljs-title function_">render</span>(scene, camera);    <span class="hljs-comment">// 2. draw the result</span>
+});
+</code></pre>
+<p>Some things to notice:</p>
+<ul>
+<li>Inside a compute <code>Fn</code>, <code>.assign()</code>, <code>.addAssign()</code> and <code>.mulAssign()</code> <em>write</em> to a variable or a buffer element, so the code reads like a normal imperative shader. Outside of <code>Fn</code> we only build values; inside, we run statements.</li>
+<li><strong><code>hash(instanceIndex)</code></strong> is a cheap pseudo-random number from an integer, between 0 and 1. A shader has no <code>Math.random()</code>, and a hash of the particle number gives each particle a stable personal random value. We use it for the starting position and for each particle's own pull strength, which is why the cloud spreads into a fuzzy ring rather than one thin line.</li>
+<li><strong>No two threads touch the same element.</strong> Thread <em>i</em> reads and writes only <code>positions[i]</code> and <code>velocities[i]</code>, so they never conflict and we need no locks or synchronisation. This is the easy, common case, and the one to design for first.</li>
+<li><strong>Nothing comes back to JavaScript.</strong> The positions never leave GPU memory. That is the whole reason it is fast. Reading them back is possible, but asynchronous and slow, so avoid it every frame.</li>
+</ul>
+<p>Drawing uses the same buffers. A <code>SpriteNodeMaterial</code> is a camera-facing quad material that takes nodes like the others, and <code>positions.toAttribute()</code> turns the storage buffer into a per-instance vertex attribute:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">SpriteNodeMaterial</span>({ <span class="hljs-attr">transparent</span>: <span class="hljs-literal">true</span>, <span class="hljs-attr">depthWrite</span>: <span class="hljs-literal">false</span>, <span class="hljs-attr">blending</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">AdditiveBlending</span> });
+material.<span class="hljs-property">positionNode</span> = positions.<span class="hljs-title function_">toAttribute</span>();
+material.<span class="hljs-property">scaleNode</span> = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.045</span>);
+<span class="hljs-comment">// colour by distance to the attractor: warm in the middle, cool outside</span>
+material.<span class="hljs-property">colorNode</span> = <span class="hljs-title function_">mix</span>(<span class="hljs-title function_">vec3</span>(<span class="hljs-number">1.0</span>, <span class="hljs-number">0.5</span>, <span class="hljs-number">0.2</span>), <span class="hljs-title function_">vec3</span>(<span class="hljs-number">0.2</span>, <span class="hljs-number">0.55</span>, <span class="hljs-number">1.0</span>), positions.<span class="hljs-title function_">toAttribute</span>().<span class="hljs-title function_">sub</span>(attractor).<span class="hljs-title function_">length</span>().<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.16</span>).<span class="hljs-title function_">saturate</span>());
+material.<span class="hljs-property">opacityNode</span> = <span class="hljs-title function_">shapeCircle</span>().<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.4</span>);   <span class="hljs-comment">// a round dot instead of a square</span>
+
+<span class="hljs-keyword">const</span> particles = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Sprite</span>(material);
+particles.<span class="hljs-property">count</span> = <span class="hljs-variable constant_">COUNT</span>;          <span class="hljs-comment">// draw COUNT instances of the quad</span>
+particles.<span class="hljs-property">frustumCulled</span> = <span class="hljs-literal">false</span>;  <span class="hljs-comment">// the bounding box is not the cloud&#x27;s</span>
+scene.<span class="hljs-title function_">add</span>(particles);
+</code></pre>
+<p>There is no geometry with 40,000 vertices and no <code>BufferAttribute</code> we update from JavaScript. The sprite is one quad, drawn <code>COUNT</code> times, and the vertex shader reads each instance's position straight from the buffer the compute pass just wrote. Additive blending makes overlapping dots add up to bright cores, which is where the glow comes from.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-5/step-6-compute.webp" alt="Screenshot: a dark scene with a swirling cloud of small glowing dots, warm orange near the centre and cool blue towards the edges, circling an invisible point. A panel says particles, simulated on the GPU, running on WebGPU." width="960" height="600" loading="lazy">
+  <figcaption>Step 6: particles simulated by a compute shader and coloured by distance. The screenshot used <code>?count=10000</code> so a software renderer could draw it; the live page defaults to 60,000. Move the pointer to steer the attractor. (<a href="/3d-tutorial/demos/part-5/step-6.html" target="_blank" rel="noopener">step-6.html</a>)</figcaption>
+</figure>
+<p>Does it work on the WebGL fallback? Yes: <code>WebGPURenderer</code> runs the same compute node there, by emulating it with older WebGL 2 features, so the demos still work, just slower and with fewer limits. Real compute power, with big counts, many buffers and more advanced tricks, is the part where having an actual WebGPU backend matters. Try step 6 once normally and once with <code>?backend=webgl</code>, and push <code>?count=</code> up to see where each one starts to struggle.</p>
+<h2>The final demo</h2>
+<p>The demo at the top of the article puts all the pieces in one scene:</p>
+<ul>
+<li><strong>The water</strong> is step 4 with a third wave, a bigger plane (<code>PlaneGeometry(40, 40, 320, 320)</code>), and one new ingredient: a fresnel term in <code>emissiveNode</code>, so the water reflects a little sky at grazing angles.</li>
+<li><strong>The orb</strong> is step 5, with a warm self-lighting term added to its emissive so it reads as glowing.</li>
+<li><strong>The sparks</strong> are step 6: 40,000 particles with an <code>If</code> added to the compute shader, so they bounce softly off the water instead of sinking into it. The attractor is not a fixed point any more: it follows the orb, and your pointer when you move it.</li>
+<li><strong>A <code>PointLight</code></strong> sits inside the orb, so its glow lights the waves around it. Because these are node materials, this just works, no shader code involved.</li>
+<li><strong>The <code>fresnel</code> helper is shared</strong>: it is one <code>Fn</code>, used by the water and the orb. Writing a shader as ordinary JavaScript functions is the main way TSL beats string templates.</li>
+</ul>
+<figure>
+  <img src="/3d-tutorial/images/part-5/final.webp" alt="Screenshot of the final demo: a dark teal ocean with rolling waves fading into fog, a glowing golden noise orb floating above it, and a ring of tiny white and orange sparks circling the orb. A lil-gui panel at the top right has Water, Orb and Particles folders." width="960" height="600" loading="lazy">
+  <figcaption>The final demo on WebGPU. (This screenshot used 10,000 particles, because it was captured with a software GPU.)</figcaption>
+</figure>
+<figure>
+  <img src="/3d-tutorial/images/part-5/demo.gif" alt="Animation of the final demo: the glowing orange orb bobs above rolling teal water while a ring of sparks circles it, stretches into a stream and swings around, with captions naming the TSL feature in use." width="480" height="300" loading="lazy">
+  <figcaption>The final demo, recorded on the WebGL 2 fallback with a fixed time step. It looks the same on WebGPU, only smoother on a real GPU.</figcaption>
+</figure>
+<p>The panel has one more trick: <strong>&quot;show generated shader&quot;</strong> prints the water's real fragment shader, in WGSL or GLSL depending on the backend you are on. It is the print statement of node materials.</p>
+<h2>When it goes wrong: common pitfalls</h2>
+<ul>
+<li><strong>A blank canvas, or an error saying the backend is not initialized.</strong> You used the renderer, or something that needs it, such as <code>PMREMGenerator</code> for an environment map, before <code>await renderer.init()</code> finished. Until it resolves there is no GPU device. Always await it first. Also avoid <code>renderAsync</code>: in r186 it is deprecated, and <code>render</code> after <code>init()</code> is all you need.</li>
+<li><strong><code>ShaderMaterial</code> shows nothing or throws.</strong> It is GLSL and <code>WebGPURenderer</code> does not run it. Rewrite it in TSL (this article), or stay on <code>WebGLRenderer</code> for that scene. The same goes for <code>onBeforeCompile</code>.</li>
+<li><strong>A console warning, &quot;Multiple instances of Three.js being imported&quot;, or materials that behave strangely.</strong> The import map points <code>three</code> and <code>three/webgpu</code> at different builds, so Three.js is loaded twice. Point both at <code>three.webgpu.js</code>, as the demos do, and import TSL from <code>three/tsl</code>.</li>
+<li><strong>Lighting looks wrong after you set <code>normalNode</code>.</strong> Node materials want a <strong>view-space</strong> normal. Convert one computed in local space with <code>transformNormalToView(...)</code>, as in step 4.</li>
+<li><strong>A JavaScript <code>if</code> or <code>Math.sin</code> in a shader.</strong> They run once, when the graph is built, not per pixel. Use TSL's <code>If</code> and <code>sin</code>, and <code>uniform</code>s for values that change.</li>
+<li><strong><code>a * b</code> gives <code>NaN</code>.</strong> Operators do not work on nodes. Use <code>a.mul(b)</code>.</li>
+<li><strong>A uniform does not change.</strong> Change <code>u.value</code>, not <code>u</code>. If you replace the node, the graph keeps pointing at the old one.</li>
+<li><strong><code>hasFeature</code> says yes, but the feature is missing.</strong> On the WebGL fallback it can answer <code>true</code>. For &quot;does this browser have WebGPU feature X&quot; read <code>adapter.features</code> as in step 1.</li>
+<li><strong><code>THREE.Clock</code> shows a deprecation warning.</strong> In r186 it is deprecated, in favour of <code>THREE.Timer</code> or a hand-kept <code>lastTime</code>, as in step 6.</li>
+<li><strong>The orb's shading ignores its bumps.</strong> Displacement does not update normals. See step 5.</li>
+<li><strong>The compute pass runs, but nothing moves.</strong> Check that <code>renderer.compute(update)</code> is called <em>every frame</em>, that <code>dt.value</code> is not zero, and that the sprite's <code>count</code> equals the number of particles you simulate.</li>
+<li><strong>Slower than the CPU version on the WebGL fallback.</strong> The fallback emulates compute. Expect smaller particle counts there, and check <code>isWebGPUBackend</code> before choosing one.</li>
+</ul>
+<h2>The full code</h2>
+<p>Here is the final demo in one file. It loads Three.js from the CDN, so you can save it and open it straight from disk.</p>
+<pre class="hljs"><code class="language-html"><span class="hljs-meta">&lt;!doctype <span class="hljs-keyword">html</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">html</span> <span class="hljs-attr">lang</span>=<span class="hljs-string">&quot;en&quot;</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">head</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">charset</span>=<span class="hljs-string">&quot;utf-8&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">name</span>=<span class="hljs-string">&quot;viewport&quot;</span> <span class="hljs-attr">content</span>=<span class="hljs-string">&quot;width=device-width, initial-scale=1&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">title</span>&gt;</span>Three.js from Scratch, Part 5 · WebGPU and TSL<span class="hljs-tag">&lt;/<span class="hljs-name">title</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">style</span>&gt;</span><span class="language-css">
+    <span class="hljs-selector-tag">html</span>, <span class="hljs-selector-tag">body</span> { <span class="hljs-attribute">margin</span>: <span class="hljs-number">0</span>; <span class="hljs-attribute">height</span>: <span class="hljs-number">100%</span>; <span class="hljs-attribute">background</span>: <span class="hljs-number">#000</span>; <span class="hljs-attribute">overflow</span>: hidden; }
+    <span class="hljs-selector-tag">canvas</span> { <span class="hljs-attribute">display</span>: block; }
+    <span class="hljs-selector-class">.panel</span> { <span class="hljs-attribute">position</span>: absolute; <span class="hljs-attribute">left</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">top</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">max-width</span>: <span class="hljs-built_in">calc</span>(<span class="hljs-number">100%</span> - <span class="hljs-number">48px</span>); <span class="hljs-attribute">font</span>: <span class="hljs-number">400</span> <span class="hljs-number">12px</span>/<span class="hljs-number">1.45</span> ui-monospace, Menlo, Consolas, monospace; <span class="hljs-attribute">color</span>: <span class="hljs-number">#e7eaf0</span>; <span class="hljs-attribute">background</span>: <span class="hljs-built_in">rgba</span>(<span class="hljs-number">18</span>, <span class="hljs-number">21</span>, <span class="hljs-number">29</span>, .<span class="hljs-number">85</span>); <span class="hljs-attribute">border</span>: <span class="hljs-number">1px</span> solid <span class="hljs-number">#3a4258</span>; <span class="hljs-attribute">border-radius</span>: <span class="hljs-number">8px</span>; <span class="hljs-attribute">padding</span>: <span class="hljs-number">8px</span> <span class="hljs-number">11px</span>; <span class="hljs-attribute">white-space</span>: pre; <span class="hljs-attribute">overflow</span>: hidden; }
+    <span class="hljs-selector-class">.panel</span> <span class="hljs-selector-tag">a</span> { <span class="hljs-attribute">color</span>: <span class="hljs-number">#7cf5d4</span>; }
+    <span class="hljs-selector-class">.hint</span> { <span class="hljs-attribute">position</span>: absolute; <span class="hljs-attribute">left</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">bottom</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">font</span>: <span class="hljs-number">400</span> <span class="hljs-number">12px</span>/<span class="hljs-number">1.45</span> ui-monospace, Menlo, Consolas, monospace; <span class="hljs-attribute">color</span>: <span class="hljs-number">#9aa3b5</span>; <span class="hljs-attribute">pointer-events</span>: none; }
+    <span class="hljs-selector-class">.label</span> { <span class="hljs-attribute">position</span>: absolute; <span class="hljs-attribute">transform</span>: <span class="hljs-built_in">translate</span>(-<span class="hljs-number">50%</span>, <span class="hljs-number">0</span>); <span class="hljs-attribute">font</span>: <span class="hljs-number">600</span> <span class="hljs-number">12px</span>/<span class="hljs-number">1.3</span> ui-monospace, Menlo, Consolas, monospace; <span class="hljs-attribute">color</span>: <span class="hljs-number">#e7eaf0</span>; <span class="hljs-attribute">background</span>: <span class="hljs-built_in">rgba</span>(<span class="hljs-number">18</span>, <span class="hljs-number">21</span>, <span class="hljs-number">29</span>, .<span class="hljs-number">8</span>); <span class="hljs-attribute">border</span>: <span class="hljs-number">1px</span> solid <span class="hljs-number">#3a4258</span>; <span class="hljs-attribute">border-radius</span>: <span class="hljs-number">6px</span>; <span class="hljs-attribute">padding</span>: <span class="hljs-number">3px</span> <span class="hljs-number">7px</span>; <span class="hljs-attribute">white-space</span>: nowrap; <span class="hljs-attribute">pointer-events</span>: none; }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">style</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;importmap&quot;</span>&gt;</span><span class="language-javascript">
+    {
+      <span class="hljs-string">&quot;imports&quot;</span>: {
+        <span class="hljs-string">&quot;three&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js&quot;</span>,
+        <span class="hljs-string">&quot;three/webgpu&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js&quot;</span>,
+        <span class="hljs-string">&quot;three/tsl&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js&quot;</span>,
+        <span class="hljs-string">&quot;three/addons/&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/&quot;</span>
+      }
+    }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">head</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">body</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">div</span> <span class="hljs-attr">id</span>=<span class="hljs-string">&quot;status&quot;</span> <span class="hljs-attr">class</span>=<span class="hljs-string">&quot;panel&quot;</span>&gt;</span>Starting WebGPURenderer…<span class="hljs-tag">&lt;/<span class="hljs-name">div</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">div</span> <span class="hljs-attr">id</span>=<span class="hljs-string">&quot;code&quot;</span> <span class="hljs-attr">class</span>=<span class="hljs-string">&quot;panel code&quot;</span> <span class="hljs-attr">hidden</span>&gt;</span><span class="hljs-tag">&lt;/<span class="hljs-name">div</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">div</span> <span class="hljs-attr">class</span>=<span class="hljs-string">&quot;hint&quot;</span>&gt;</span>Drag to orbit · move the pointer to steer the glowing particles · add ?backend=webgl to force the fallback<span class="hljs-tag">&lt;/<span class="hljs-name">div</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">style</span>&gt;</span><span class="language-css">
+    <span class="hljs-selector-class">.code</span> { <span class="hljs-attribute">left</span>: auto; <span class="hljs-attribute">right</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">top</span>: auto; <span class="hljs-attribute">bottom</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">width</span>: <span class="hljs-built_in">min</span>(<span class="hljs-number">560px</span>, <span class="hljs-built_in">calc</span>(<span class="hljs-number">100%</span> - <span class="hljs-number">24px</span>)); <span class="hljs-attribute">height</span>: <span class="hljs-number">46%</span>; <span class="hljs-attribute">overflow</span>: auto; <span class="hljs-attribute">font-size</span>: <span class="hljs-number">11px</span>; <span class="hljs-attribute">line-height</span>: <span class="hljs-number">1.4</span>; }
+    <span class="hljs-selector-class">.code</span><span class="hljs-selector-attr">[hidden]</span> { <span class="hljs-attribute">display</span>: none; }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">style</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;module&quot;</span>&gt;</span><span class="language-javascript">
+    <span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/webgpu&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">Fn</span>, <span class="hljs-title class_">If</span>, uniform, time, vec2, vec3, float, sin, mix, smoothstep, normalize, oneMinus, varying, hash,
+      positionLocal, normalLocal, normalView, positionViewDirection, transformNormalToView,
+      instancedArray, instanceIndex, shapeCircle, mx_fractal_noise_float } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/tsl&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">OrbitControls</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/controls/OrbitControls.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-variable constant_">GUI</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/libs/lil-gui.module.min.js&#x27;</span>;
+
+    <span class="hljs-keyword">const</span> scene = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Scene</span>();
+    scene.<span class="hljs-property">background</span> = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-number">0x0b0d14</span>);
+    scene.<span class="hljs-property">fog</span> = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Fog</span>(<span class="hljs-number">0x0b0d14</span>, <span class="hljs-number">12</span>, <span class="hljs-number">34</span>);
+
+    <span class="hljs-keyword">const</span> camera = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PerspectiveCamera</span>(<span class="hljs-number">50</span>, innerWidth / innerHeight, <span class="hljs-number">0.1</span>, <span class="hljs-number">100</span>);
+    camera.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">4.2</span>, <span class="hljs-number">11</span>);
+
+    <span class="hljs-comment">// WebGPU if the browser has it, WebGL 2 if not. ?backend=webgl forces the fallback.</span>
+    <span class="hljs-keyword">const</span> params = <span class="hljs-keyword">new</span> <span class="hljs-title class_">URLSearchParams</span>(location.<span class="hljs-property">search</span>);
+    <span class="hljs-keyword">const</span> status = <span class="hljs-variable language_">document</span>.<span class="hljs-title function_">getElementById</span>(<span class="hljs-string">&#x27;status&#x27;</span>);
+
+    <span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGPURenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span>, <span class="hljs-attr">forceWebGL</span>: params.<span class="hljs-title function_">get</span>(<span class="hljs-string">&#x27;backend&#x27;</span>) === <span class="hljs-string">&#x27;webgl&#x27;</span> });
+    renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+    renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    <span class="hljs-variable language_">document</span>.<span class="hljs-property">body</span>.<span class="hljs-title function_">appendChild</span>(renderer.<span class="hljs-property">domElement</span>);
+
+    <span class="hljs-keyword">try</span> {
+      <span class="hljs-keyword">await</span> renderer.<span class="hljs-title function_">init</span>();   <span class="hljs-comment">// async: asks the browser for a GPU device, or falls back</span>
+    } <span class="hljs-keyword">catch</span> (error) {
+      status.<span class="hljs-property">textContent</span> = <span class="hljs-string">&#x27;Sorry: this browser has neither WebGPU nor WebGL 2.\n&#x27;</span> + error.<span class="hljs-property">message</span>;
+      <span class="hljs-keyword">throw</span> error;
+    }
+    <span class="hljs-keyword">const</span> isWebGPU = renderer.<span class="hljs-property">backend</span>.<span class="hljs-property">isWebGPUBackend</span> === <span class="hljs-literal">true</span>;
+    <span class="hljs-keyword">const</span> backendName = isWebGPU ? <span class="hljs-string">&#x27;WebGPU (TSL compiled to WGSL)&#x27;</span> : <span class="hljs-string">&#x27;WebGL 2 fallback (TSL compiled to GLSL)&#x27;</span>;
+    <span class="hljs-keyword">const</span> controls = <span class="hljs-keyword">new</span> <span class="hljs-title class_">OrbitControls</span>(camera, renderer.<span class="hljs-property">domElement</span>);
+    controls.<span class="hljs-property">target</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">1.2</span>, <span class="hljs-number">0</span>);
+    controls.<span class="hljs-property">enableDamping</span> = <span class="hljs-literal">true</span>;
+    controls.<span class="hljs-property">maxPolarAngle</span> = <span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> * <span class="hljs-number">0.49</span>;
+    controls.<span class="hljs-title function_">update</span>();
+
+    <span class="hljs-comment">// ---------- Shared pieces ----------</span>
+
+    <span class="hljs-comment">// Fresnel: 0 when a surface faces the camera, 1 at grazing angles. Used by the water and the orb.</span>
+    <span class="hljs-keyword">const</span> fresnel = <span class="hljs-title class_">Fn</span>(<span class="hljs-function">(<span class="hljs-params">[normal, power]</span>) =&gt;</span> {
+      <span class="hljs-keyword">const</span> facing = normal.<span class="hljs-title function_">dot</span>(positionViewDirection).<span class="hljs-title function_">saturate</span>();
+      <span class="hljs-keyword">return</span> <span class="hljs-title function_">oneMinus</span>(facing).<span class="hljs-title function_">pow</span>(power);
+    });
+
+    <span class="hljs-comment">// ---------- Water: positionNode + normalNode + colorNode + emissiveNode ----------</span>
+
+    <span class="hljs-keyword">const</span> amplitude = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.35</span>);
+    <span class="hljs-keyword">const</span> frequency = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.9</span>);
+    <span class="hljs-keyword">const</span> speed = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">1.0</span>);
+    <span class="hljs-keyword">const</span> deep = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#041b45&#x27;</span>));
+    <span class="hljs-keyword">const</span> crest = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#2a9d9a&#x27;</span>));
+    <span class="hljs-keyword">const</span> sky = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#8fb8ff&#x27;</span>));
+
+    <span class="hljs-keyword">const</span> waveHeight = <span class="hljs-title class_">Fn</span>(<span class="hljs-function">(<span class="hljs-params">[p]</span>) =&gt;</span> {
+      <span class="hljs-keyword">const</span> t = time.<span class="hljs-title function_">mul</span>(speed);
+      <span class="hljs-keyword">const</span> a = <span class="hljs-title function_">sin</span>(p.<span class="hljs-property">x</span>.<span class="hljs-title function_">mul</span>(frequency).<span class="hljs-title function_">add</span>(t)).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.5</span>);
+      <span class="hljs-keyword">const</span> b = <span class="hljs-title function_">sin</span>(p.<span class="hljs-property">y</span>.<span class="hljs-title function_">mul</span>(frequency).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.8</span>).<span class="hljs-title function_">add</span>(t.<span class="hljs-title function_">mul</span>(<span class="hljs-number">1.3</span>))).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.5</span>);
+      <span class="hljs-keyword">const</span> c = <span class="hljs-title function_">sin</span>(p.<span class="hljs-property">x</span>.<span class="hljs-title function_">add</span>(p.<span class="hljs-property">y</span>).<span class="hljs-title function_">mul</span>(frequency).<span class="hljs-title function_">mul</span>(<span class="hljs-number">1.7</span>).<span class="hljs-title function_">add</span>(t.<span class="hljs-title function_">mul</span>(<span class="hljs-number">1.9</span>))).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.25</span>);
+      <span class="hljs-keyword">return</span> a.<span class="hljs-title function_">add</span>(b).<span class="hljs-title function_">add</span>(c).<span class="hljs-title function_">mul</span>(amplitude);
+    });
+
+    <span class="hljs-keyword">const</span> p = positionLocal.<span class="hljs-property">xy</span>;
+    <span class="hljs-keyword">const</span> h = <span class="hljs-title function_">waveHeight</span>(p);
+    <span class="hljs-keyword">const</span> e = <span class="hljs-number">0.02</span>;
+    <span class="hljs-keyword">const</span> slope = <span class="hljs-title function_">normalize</span>(<span class="hljs-title function_">vec3</span>(h.<span class="hljs-title function_">sub</span>(<span class="hljs-title function_">waveHeight</span>(p.<span class="hljs-title function_">add</span>(<span class="hljs-title function_">vec2</span>(e, <span class="hljs-number">0</span>)))), h.<span class="hljs-title function_">sub</span>(<span class="hljs-title function_">waveHeight</span>(p.<span class="hljs-title function_">add</span>(<span class="hljs-title function_">vec2</span>(<span class="hljs-number">0</span>, e)))), e));
+    <span class="hljs-keyword">const</span> waterNormal = <span class="hljs-title function_">transformNormalToView</span>(<span class="hljs-title function_">varying</span>(slope)).<span class="hljs-title function_">normalize</span>();
+
+    <span class="hljs-keyword">const</span> waterMaterial = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardNodeMaterial</span>({ <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.18</span>, <span class="hljs-attr">metalness</span>: <span class="hljs-number">0.0</span> });
+    waterMaterial.<span class="hljs-property">positionNode</span> = positionLocal.<span class="hljs-title function_">add</span>(<span class="hljs-title function_">vec3</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>, h));
+    waterMaterial.<span class="hljs-property">normalNode</span> = waterNormal;
+    waterMaterial.<span class="hljs-property">colorNode</span> = <span class="hljs-title function_">mix</span>(deep, crest, <span class="hljs-title function_">smoothstep</span>(amplitude.<span class="hljs-title function_">mul</span>(-<span class="hljs-number">0.3</span>), amplitude.<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.9</span>), <span class="hljs-title function_">varying</span>(h)));
+    waterMaterial.<span class="hljs-property">emissiveNode</span> = sky.<span class="hljs-title function_">mul</span>(<span class="hljs-title function_">fresnel</span>(waterNormal, <span class="hljs-number">4</span>)).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.4</span>);   <span class="hljs-comment">// reflected sky at grazing angles</span>
+
+    <span class="hljs-keyword">const</span> water = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PlaneGeometry</span>(<span class="hljs-number">40</span>, <span class="hljs-number">40</span>, <span class="hljs-number">320</span>, <span class="hljs-number">320</span>), waterMaterial);
+    water.<span class="hljs-property">rotation</span>.<span class="hljs-property">x</span> = -<span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> / <span class="hljs-number">2</span>;
+    scene.<span class="hljs-title function_">add</span>(water);
+
+    <span class="hljs-comment">// ---------- Orb: noise displacement + fresnel rim ----------</span>
+
+    <span class="hljs-keyword">const</span> wobble = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.2</span>);
+    <span class="hljs-keyword">const</span> rimPower = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">3.0</span>);
+    <span class="hljs-keyword">const</span> rimColor = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-string">&#x27;#7cf5d4&#x27;</span>));
+
+    <span class="hljs-keyword">const</span> noise = <span class="hljs-title function_">mx_fractal_noise_float</span>(positionLocal.<span class="hljs-title function_">mul</span>(<span class="hljs-number">1.4</span>).<span class="hljs-title function_">add</span>(time.<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.3</span>)), <span class="hljs-number">3</span>, <span class="hljs-number">2.0</span>, <span class="hljs-number">0.5</span>);
+
+    <span class="hljs-keyword">const</span> orbMaterial = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardNodeMaterial</span>({ <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.5</span>, <span class="hljs-attr">metalness</span>: <span class="hljs-number">0.0</span> });
+    orbMaterial.<span class="hljs-property">positionNode</span> = positionLocal.<span class="hljs-title function_">add</span>(normalLocal.<span class="hljs-title function_">mul</span>(noise.<span class="hljs-title function_">mul</span>(wobble)));
+    <span class="hljs-keyword">const</span> orbColor = <span class="hljs-title function_">mix</span>(<span class="hljs-title function_">vec3</span>(<span class="hljs-number">0.95</span>, <span class="hljs-number">0.28</span>, <span class="hljs-number">0.05</span>), <span class="hljs-title function_">vec3</span>(<span class="hljs-number">1.0</span>, <span class="hljs-number">0.7</span>, <span class="hljs-number">0.2</span>), noise.<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.5</span>).<span class="hljs-title function_">add</span>(<span class="hljs-number">0.5</span>));
+    orbMaterial.<span class="hljs-property">colorNode</span> = orbColor;
+    orbMaterial.<span class="hljs-property">emissiveNode</span> = rimColor.<span class="hljs-title function_">mul</span>(<span class="hljs-title function_">fresnel</span>(normalView, rimPower)).<span class="hljs-title function_">mul</span>(<span class="hljs-number">1.8</span>).<span class="hljs-title function_">add</span>(orbColor.<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.35</span>));   <span class="hljs-comment">// rim glow + a little self-light</span>
+
+    <span class="hljs-keyword">const</span> orb = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">SphereGeometry</span>(<span class="hljs-number">0.85</span>, <span class="hljs-number">128</span>, <span class="hljs-number">96</span>), orbMaterial);
+    scene.<span class="hljs-title function_">add</span>(orb);
+
+    <span class="hljs-comment">// ---------- Particles: compute shaders ----------</span>
+
+    <span class="hljs-keyword">const</span> <span class="hljs-variable constant_">COUNT</span> = <span class="hljs-title class_">Number</span>(params.<span class="hljs-title function_">get</span>(<span class="hljs-string">&#x27;count&#x27;</span>)) || <span class="hljs-number">40000</span>;   <span class="hljs-comment">// ?count=10000 for a lighter run</span>
+    <span class="hljs-keyword">const</span> positions = <span class="hljs-title function_">instancedArray</span>(<span class="hljs-variable constant_">COUNT</span>, <span class="hljs-string">&#x27;vec3&#x27;</span>);
+    <span class="hljs-keyword">const</span> velocities = <span class="hljs-title function_">instancedArray</span>(<span class="hljs-variable constant_">COUNT</span>, <span class="hljs-string">&#x27;vec3&#x27;</span>);
+
+    <span class="hljs-keyword">const</span> attractor = <span class="hljs-title function_">uniform</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>(<span class="hljs-number">0</span>, <span class="hljs-number">1.6</span>, <span class="hljs-number">0</span>));
+    <span class="hljs-keyword">const</span> pull = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">9</span>);
+    <span class="hljs-keyword">const</span> swirl = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">7</span>);
+    <span class="hljs-keyword">const</span> drag = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.8</span>);
+    <span class="hljs-keyword">const</span> dt = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">1</span> / <span class="hljs-number">60</span>);
+
+    <span class="hljs-keyword">const</span> init = <span class="hljs-title class_">Fn</span>(<span class="hljs-function">() =&gt;</span> {
+      <span class="hljs-keyword">const</span> position = positions.<span class="hljs-title function_">element</span>(instanceIndex);
+      position.<span class="hljs-title function_">assign</span>(<span class="hljs-title function_">vec3</span>(
+        <span class="hljs-title function_">hash</span>(instanceIndex).<span class="hljs-title function_">sub</span>(<span class="hljs-number">0.5</span>).<span class="hljs-title function_">mul</span>(<span class="hljs-number">12</span>),
+        <span class="hljs-title function_">hash</span>(instanceIndex.<span class="hljs-title function_">add</span>(<span class="hljs-number">1</span>)).<span class="hljs-title function_">mul</span>(<span class="hljs-number">5</span>).<span class="hljs-title function_">add</span>(<span class="hljs-number">0.6</span>),
+        <span class="hljs-title function_">hash</span>(instanceIndex.<span class="hljs-title function_">add</span>(<span class="hljs-number">2</span>)).<span class="hljs-title function_">sub</span>(<span class="hljs-number">0.5</span>).<span class="hljs-title function_">mul</span>(<span class="hljs-number">12</span>),
+      ));
+    })().<span class="hljs-title function_">compute</span>(<span class="hljs-variable constant_">COUNT</span>);
+
+    <span class="hljs-keyword">const</span> update = <span class="hljs-title class_">Fn</span>(<span class="hljs-function">() =&gt;</span> {
+      <span class="hljs-keyword">const</span> position = positions.<span class="hljs-title function_">element</span>(instanceIndex);
+      <span class="hljs-keyword">const</span> velocity = velocities.<span class="hljs-title function_">element</span>(instanceIndex);
+
+      <span class="hljs-keyword">const</span> toAttractor = attractor.<span class="hljs-title function_">sub</span>(position);
+      <span class="hljs-keyword">const</span> distance = toAttractor.<span class="hljs-title function_">length</span>().<span class="hljs-title function_">max</span>(<span class="hljs-number">0.5</span>);
+      <span class="hljs-keyword">const</span> direction = toAttractor.<span class="hljs-title function_">div</span>(distance);
+      <span class="hljs-keyword">const</span> sideways = <span class="hljs-title function_">vec3</span>(direction.<span class="hljs-property">z</span>.<span class="hljs-title function_">negate</span>(), <span class="hljs-number">0</span>, direction.<span class="hljs-property">x</span>);
+      <span class="hljs-keyword">const</span> strength = <span class="hljs-title function_">hash</span>(instanceIndex.<span class="hljs-title function_">add</span>(<span class="hljs-number">7</span>)).<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.9</span>).<span class="hljs-title function_">add</span>(<span class="hljs-number">0.55</span>);
+
+      velocity.<span class="hljs-title function_">addAssign</span>(direction.<span class="hljs-title function_">mul</span>(pull).<span class="hljs-title function_">add</span>(sideways.<span class="hljs-title function_">mul</span>(swirl)).<span class="hljs-title function_">mul</span>(strength).<span class="hljs-title function_">div</span>(distance.<span class="hljs-title function_">add</span>(<span class="hljs-number">1</span>)).<span class="hljs-title function_">mul</span>(dt));
+      velocity.<span class="hljs-title function_">mulAssign</span>(<span class="hljs-title function_">float</span>(<span class="hljs-number">1</span>).<span class="hljs-title function_">sub</span>(drag.<span class="hljs-title function_">mul</span>(dt)));
+      position.<span class="hljs-title function_">addAssign</span>(velocity.<span class="hljs-title function_">mul</span>(dt));
+
+      <span class="hljs-comment">// stay above the water</span>
+      <span class="hljs-title class_">If</span>(position.<span class="hljs-property">y</span>.<span class="hljs-title function_">lessThan</span>(<span class="hljs-number">0.5</span>), <span class="hljs-function">() =&gt;</span> {
+        position.<span class="hljs-property">y</span>.<span class="hljs-title function_">assign</span>(<span class="hljs-number">0.5</span>);
+        velocity.<span class="hljs-property">y</span>.<span class="hljs-title function_">assign</span>(velocity.<span class="hljs-property">y</span>.<span class="hljs-title function_">abs</span>().<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.3</span>));
+      });
+    })().<span class="hljs-title function_">compute</span>(<span class="hljs-variable constant_">COUNT</span>);
+
+    <span class="hljs-keyword">const</span> sparkMaterial = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">SpriteNodeMaterial</span>({ <span class="hljs-attr">transparent</span>: <span class="hljs-literal">true</span>, <span class="hljs-attr">depthWrite</span>: <span class="hljs-literal">false</span>, <span class="hljs-attr">blending</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">AdditiveBlending</span> });
+    sparkMaterial.<span class="hljs-property">positionNode</span> = positions.<span class="hljs-title function_">toAttribute</span>();
+    sparkMaterial.<span class="hljs-property">scaleNode</span> = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.032</span>);
+    sparkMaterial.<span class="hljs-property">colorNode</span> = <span class="hljs-title function_">mix</span>(<span class="hljs-title function_">vec3</span>(<span class="hljs-number">1.0</span>, <span class="hljs-number">0.55</span>, <span class="hljs-number">0.2</span>), <span class="hljs-title function_">vec3</span>(<span class="hljs-number">0.25</span>, <span class="hljs-number">0.6</span>, <span class="hljs-number">1.0</span>), positions.<span class="hljs-title function_">toAttribute</span>().<span class="hljs-title function_">sub</span>(attractor).<span class="hljs-title function_">length</span>().<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.18</span>).<span class="hljs-title function_">saturate</span>());
+    sparkMaterial.<span class="hljs-property">opacityNode</span> = <span class="hljs-title function_">shapeCircle</span>().<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.3</span>);
+
+    <span class="hljs-keyword">const</span> sparks = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Sprite</span>(sparkMaterial);
+    sparks.<span class="hljs-property">count</span> = <span class="hljs-variable constant_">COUNT</span>;
+    sparks.<span class="hljs-property">frustumCulled</span> = <span class="hljs-literal">false</span>;
+    scene.<span class="hljs-title function_">add</span>(sparks);
+
+    renderer.<span class="hljs-title function_">compute</span>(init);
+
+    <span class="hljs-comment">// ---------- Lights ----------</span>
+
+    <span class="hljs-keyword">const</span> sun = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">DirectionalLight</span>(<span class="hljs-number">0xffffff</span>, <span class="hljs-number">2.0</span>);
+    sun.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(-<span class="hljs-number">4</span>, <span class="hljs-number">5</span>, <span class="hljs-number">3</span>);
+    <span class="hljs-keyword">const</span> glow = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PointLight</span>(<span class="hljs-number">0xffa24a</span>, <span class="hljs-number">22</span>, <span class="hljs-number">14</span>, <span class="hljs-number">2</span>);
+    scene.<span class="hljs-title function_">add</span>(sun, glow, <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">HemisphereLight</span>(<span class="hljs-number">0x9ec5ff</span>, <span class="hljs-number">0x0b0d14</span>, <span class="hljs-number">0.4</span>));
+
+    <span class="hljs-comment">// ---------- Status, shader viewer and the panel ----------</span>
+
+    status.<span class="hljs-property">textContent</span> = <span class="hljs-string">&#x27;Three.js from Scratch · Part 5\n&#x27;</span> + <span class="hljs-variable constant_">COUNT</span>.<span class="hljs-title function_">toLocaleString</span>(<span class="hljs-string">&#x27;en&#x27;</span>) + <span class="hljs-string">&#x27; GPU particles · running on: &#x27;</span> + backendName;
+
+    <span class="hljs-keyword">const</span> codePanel = <span class="hljs-variable language_">document</span>.<span class="hljs-title function_">getElementById</span>(<span class="hljs-string">&#x27;code&#x27;</span>);
+    <span class="hljs-keyword">async</span> <span class="hljs-keyword">function</span> <span class="hljs-title function_">showShader</span>(<span class="hljs-params"></span>) {
+      <span class="hljs-keyword">if</span> (!codePanel.<span class="hljs-property">hidden</span>) { codePanel.<span class="hljs-property">hidden</span> = <span class="hljs-literal">true</span>; <span class="hljs-keyword">return</span>; }
+      <span class="hljs-keyword">const</span> { fragmentShader } = <span class="hljs-keyword">await</span> renderer.<span class="hljs-property">debug</span>.<span class="hljs-title function_">getShaderAsync</span>(scene, camera, water);
+      codePanel.<span class="hljs-property">textContent</span> = <span class="hljs-string">&#x27;// generated &#x27;</span> + (isWebGPU ? <span class="hljs-string">&#x27;WGSL&#x27;</span> : <span class="hljs-string">&#x27;GLSL&#x27;</span>) + <span class="hljs-string">&#x27; fragment shader of the water (&#x27;</span> + fragmentShader.<span class="hljs-title function_">split</span>(<span class="hljs-string">&#x27;\n&#x27;</span>).<span class="hljs-property">length</span> + <span class="hljs-string">&#x27; lines)\n&#x27;</span> + fragmentShader;
+      codePanel.<span class="hljs-property">hidden</span> = <span class="hljs-literal">false</span>;
+    }
+
+    <span class="hljs-keyword">const</span> gui = <span class="hljs-keyword">new</span> <span class="hljs-title function_">GUI</span>({ <span class="hljs-attr">title</span>: <span class="hljs-string">&#x27;Part 5 · WebGPU and TSL&#x27;</span> });
+    <span class="hljs-keyword">const</span> waterFolder = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Water&#x27;</span>);
+    waterFolder.<span class="hljs-title function_">add</span>(amplitude, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0.8</span>, <span class="hljs-number">0.01</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;amplitude&#x27;</span>);
+    waterFolder.<span class="hljs-title function_">add</span>(frequency, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0.2</span>, <span class="hljs-number">3</span>, <span class="hljs-number">0.01</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;frequency&#x27;</span>);
+    waterFolder.<span class="hljs-title function_">add</span>(speed, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">3</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;speed&#x27;</span>);
+    <span class="hljs-keyword">const</span> orbFolder = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Orb&#x27;</span>);
+    orbFolder.<span class="hljs-title function_">add</span>(wobble, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0.45</span>, <span class="hljs-number">0.01</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;wobble&#x27;</span>);
+    orbFolder.<span class="hljs-title function_">add</span>(rimPower, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0.5</span>, <span class="hljs-number">6</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;fresnel power&#x27;</span>);
+    orbFolder.<span class="hljs-title function_">addColor</span>({ <span class="hljs-attr">rim</span>: <span class="hljs-string">&#x27;#7cf5d4&#x27;</span> }, <span class="hljs-string">&#x27;rim&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> rimColor.<span class="hljs-property">value</span>.<span class="hljs-title function_">set</span>(v));
+    <span class="hljs-keyword">const</span> sparkFolder = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Particles (compute)&#x27;</span>);
+    sparkFolder.<span class="hljs-title function_">add</span>(pull, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">30</span>, <span class="hljs-number">0.1</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;pull&#x27;</span>);
+    sparkFolder.<span class="hljs-title function_">add</span>(swirl, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">20</span>, <span class="hljs-number">0.1</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;swirl&#x27;</span>);
+    sparkFolder.<span class="hljs-title function_">add</span>(drag, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">3</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;drag&#x27;</span>);
+    sparkFolder.<span class="hljs-title function_">add</span>({ <span class="hljs-attr">scatter</span>: <span class="hljs-function">() =&gt;</span> renderer.<span class="hljs-title function_">compute</span>(init) }, <span class="hljs-string">&#x27;scatter&#x27;</span>);
+    gui.<span class="hljs-title function_">add</span>({ showShader }, <span class="hljs-string">&#x27;showShader&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;show generated shader&#x27;</span>);
+    <span class="hljs-keyword">if</span> (innerWidth &lt; <span class="hljs-number">700</span>) gui.<span class="hljs-title function_">close</span>();
+
+    <span class="hljs-comment">// ---------- Interaction ----------</span>
+
+    <span class="hljs-keyword">const</span> orbitPlane = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Plane</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>(<span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0</span>), -<span class="hljs-number">1.6</span>);
+    <span class="hljs-keyword">const</span> raycaster = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Raycaster</span>();
+    <span class="hljs-keyword">const</span> pointer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector2</span>();
+    <span class="hljs-keyword">const</span> hit = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>();
+    <span class="hljs-keyword">const</span> home = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>();
+    <span class="hljs-keyword">let</span> lastMove = -<span class="hljs-title class_">Infinity</span>;
+    renderer.<span class="hljs-property">domElement</span>.<span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;pointermove&#x27;</span>, <span class="hljs-function">(<span class="hljs-params">event</span>) =&gt;</span> {
+      pointer.<span class="hljs-title function_">set</span>((event.<span class="hljs-property">clientX</span> / innerWidth) * <span class="hljs-number">2</span> - <span class="hljs-number">1</span>, -(event.<span class="hljs-property">clientY</span> / innerHeight) * <span class="hljs-number">2</span> + <span class="hljs-number">1</span>);
+      lastMove = performance.<span class="hljs-title function_">now</span>();
+    });
+
+    <span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;resize&#x27;</span>, <span class="hljs-function">() =&gt;</span> {
+      camera.<span class="hljs-property">aspect</span> = innerWidth / innerHeight;
+      camera.<span class="hljs-title function_">updateProjectionMatrix</span>();
+      renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    });
+
+    <span class="hljs-keyword">let</span> lastTime = <span class="hljs-number">0</span>;
+    renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">t</span>) =&gt;</span> {
+      <span class="hljs-keyword">const</span> seconds = t / <span class="hljs-number">1000</span>;
+      orb.<span class="hljs-property">position</span>.<span class="hljs-property">y</span> = <span class="hljs-number">1.6</span> + <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">sin</span>(seconds * <span class="hljs-number">1.1</span>) * <span class="hljs-number">0.12</span>;
+      orb.<span class="hljs-property">rotation</span>.<span class="hljs-property">y</span> = seconds * <span class="hljs-number">0.15</span>;
+      glow.<span class="hljs-property">position</span>.<span class="hljs-title function_">copy</span>(orb.<span class="hljs-property">position</span>);
+
+      <span class="hljs-comment">// the particles circle the orb, or the pointer while it is moving</span>
+      home.<span class="hljs-title function_">copy</span>(orb.<span class="hljs-property">position</span>);
+      raycaster.<span class="hljs-title function_">setFromCamera</span>(pointer, camera);
+      <span class="hljs-keyword">const</span> aiming = performance.<span class="hljs-title function_">now</span>() - lastMove &lt; <span class="hljs-number">3000</span> &amp;&amp; raycaster.<span class="hljs-property">ray</span>.<span class="hljs-title function_">intersectPlane</span>(orbitPlane, hit);
+      attractor.<span class="hljs-property">value</span>.<span class="hljs-title function_">lerp</span>(aiming ? hit.<span class="hljs-title function_">clampLength</span>(<span class="hljs-number">0</span>, <span class="hljs-number">9</span>) : home, <span class="hljs-number">0.08</span>);
+
+      controls.<span class="hljs-title function_">update</span>();
+      dt.<span class="hljs-property">value</span> = <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>((t - lastTime) / <span class="hljs-number">1000</span>, <span class="hljs-number">1</span> / <span class="hljs-number">30</span>);
+      lastTime = t;
+      renderer.<span class="hljs-title function_">compute</span>(update);          <span class="hljs-comment">// 1. simulate on the GPU</span>
+      renderer.<span class="hljs-title function_">render</span>(scene, camera);    <span class="hljs-comment">// 2. draw</span>
+    });
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">body</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">html</span>&gt;</span>
+</code></pre>
+<p>The step-by-step versions are in the repo too: <a href="/3d-tutorial/demos/part-5/step-1.html">step-1.html</a> (<code>WebGPURenderer</code>, init and feature detection), <a href="/3d-tutorial/demos/part-5/step-2.html">step-2.html</a> (the node material family), <a href="/3d-tutorial/demos/part-5/step-3.html">step-3.html</a> (a colour node graph), <a href="/3d-tutorial/demos/part-5/step-4.html">step-4.html</a> (waves with <code>positionNode</code> and <code>normalNode</code>), <a href="/3d-tutorial/demos/part-5/step-5.html">step-5.html</a> (noise, fresnel and the generated shader) and <a href="/3d-tutorial/demos/part-5/step-6.html">step-6.html</a> (compute particles).</p>
+<p>The fresnel and fbm ideas are the same ones Part 4 explained. The noise itself comes from the MaterialX noise nodes that ship with Three.js.</p>
+<h2>A few things to try</h2>
+<ul>
+<li>In step 1, open the page with <code>?backend=webgl</code>, then without, and compare the panel and the frame rate.</li>
+<li>In step 3, replace the <code>smoothstep</code> band with <code>wave.mul(0.5).add(0.5)</code> for soft stripes, or swap <code>uv().x</code> for <code>uv().y</code> in <code>wave</code> to turn the vertical stripes into horizontal bands.</li>
+<li>In step 4, add a third wave running diagonally, <code>sin(p.x.add(p.y).mul(frequency).mul(1.7).add(t.mul(1.9)))</code>, as the final demo does.</li>
+<li>In step 5, change <code>fresnel(power)</code> to <code>fresnel(power).mul(sin(time.mul(3)).mul(0.5).add(0.5))</code> for a pulsing rim, or move <code>noise</code> into <code>roughnessNode</code> to make the orb patchy and glossy.</li>
+<li>In step 6, change <code>sideways</code> to <code>vec3(direction.z, 0, direction.x.negate())</code> to make the cloud orbit the other way, or set <code>swirl</code> to 0 and watch it fall into a single point.</li>
+<li>In the final demo, raise <code>?count=</code> to 200000 on a desktop GPU and compare with <code>?backend=webgl</code>.</li>
+<li>Print the shader of any material you have built so far: <code>console.log((await renderer.debug.getShaderAsync(scene, camera, mesh)).fragmentShader)</code>.</li>
+</ul>
+<h2>Next time</h2>
+<p>We can now render with WebGPU, write materials as node graphs and move tens of thousands of particles on the GPU. Next, in Part 6, we will look at <strong>post-processing</strong>: rendering the scene to a texture first and then running effects over the whole image, such as bloom and colour grading, using the same TSL nodes. The glow of this part's orb is an obvious place to start. See you there.</p>
+</div>
+  <nav class="pager"><a href="/3d-tutorial/part-4-shaders/">← Part 4: Your First Shaders</a><span class="soon-next">Next: Part 6, Post-processing (coming soon)</span></nav>
+  <aside class="support" aria-label="Support the series">
+  <p>This series is free. If it helped you, you can support it with a coffee.</p>
+  <div class="support-links"><a class="support-img" href="https://www.buymeacoffee.com/iodiot" target="_blank" rel="noopener" title="Buy Me a Coffee"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height:50px;width:181px" loading="lazy"></a></div>
+</aside>
+</article>
+</main>
+<footer class="foot"><p>© Mike Smahin · <a href="https://github.com/iodiot/3d-tutorial" target="_blank" rel="noopener">source on GitHub</a></p></footer>
+<script data-goatcounter="https://iodiot.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

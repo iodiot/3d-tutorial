@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 4 · Porting the Part 4 waves to TSL: positionNode, Fn and normals</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+    .panel a { color: #7cf5d4; }
+    .hint { position: absolute; left: 12px; bottom: 12px; font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; pointer-events: none; }
+    .label { position: absolute; transform: translate(-50%, 0); font: 600 12px/1.3 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .8); border: 1px solid #3a4258; border-radius: 6px; padding: 3px 7px; white-space: nowrap; pointer-events: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel">Starting WebGPURenderer…</div>
+  <div class="hint">Drag to orbit · the vertex shader and the lighting are TSL nodes</div>
+  <script type="module">
+    import * as THREE from 'three/webgpu';
+    import { Fn, uniform, time, positionLocal, vec2, vec3, sin, mix, smoothstep, normalize, varying, transformNormalToView } from 'three/tsl';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(3.1, 2.8, 4.3);
+
+    // WebGPU if the browser has it, WebGL 2 if not. ?backend=webgl forces the fallback.
+    const params = new URLSearchParams(location.search);
+    const status = document.getElementById('status');
+
+    const renderer = new THREE.WebGPURenderer({ antialias: true, forceWebGL: params.get('backend') === 'webgl' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    try {
+      await renderer.init();   // async: asks the browser for a GPU device, or falls back
+    } catch (error) {
+      status.textContent = 'Sorry: this browser has neither WebGPU nor WebGL 2.\n' + error.message;
+      throw error;
+    }
+    const isWebGPU = renderer.backend.isWebGPUBackend === true;
+    const backendName = isWebGPU ? 'WebGPU (TSL compiled to WGSL)' : 'WebGL 2 fallback (TSL compiled to GLSL)';
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, -0.2, 0);
+
+    const amplitude = uniform(0.25);
+    const frequency = uniform(3.0);
+    const speed = uniform(1.0);
+    const deep = uniform(new THREE.Color('#0b3d91'));
+    const crest = uniform(new THREE.Color('#7cf5d4'));
+
+    // Fn() wraps a function so it becomes a reusable piece of shader.
+    // Give it a point on the plane, get the height of the water there.
+    const waveHeight = Fn(([p]) => {
+      const t = time.mul(speed);
+      const a = sin(p.x.mul(frequency).add(t));
+      const b = sin(p.y.mul(frequency).mul(0.8).add(t.mul(1.3)));
+      return a.add(b).mul(0.5).mul(amplitude);
+    });
+
+    // Vertex stage: lift every vertex of the plane by waveHeight
+    const p = positionLocal.xy;
+    const h = waveHeight(p);
+
+    // Normals by finite differences, like in Part 4: sample the height a tiny step away along x and y.
+    // The plane lies in the xy plane, so its normal points along +z.
+    const e = 0.01;
+    const hx = waveHeight(p.add(vec2(e, 0)));
+    const hy = waveHeight(p.add(vec2(0, e)));
+    const normalLocal = normalize(vec3(h.sub(hx), h.sub(hy), e));
+
+    const material = new THREE.MeshStandardNodeMaterial({ roughness: 0.22, metalness: 0.0 });
+    material.positionNode = positionLocal.add(vec3(0, 0, h));
+    material.normalNode = transformNormalToView(varying(normalLocal)).normalize();   // lighting uses view-space normals
+    material.colorNode = mix(deep, crest, smoothstep(amplitude.mul(-0.2), amplitude.mul(0.9), varying(h)));
+
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(4, 4, 160, 160), material);
+    water.rotation.x = -Math.PI / 2;
+    scene.add(water);
+
+    const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+    sun.position.set(-3, 2.5, 2);
+    scene.add(sun, new THREE.HemisphereLight(0x9ec5ff, 0x1b1f2a, 0.35));
+
+    status.textContent = 'positionNode + normalNode + colorNode\nrunning on: ' + backendName;
+
+    const gui = new GUI({ title: 'Step 4' });
+    gui.add(amplitude, 'value', 0, 0.6, 0.01).name('amplitude');
+    gui.add(frequency, 'value', 0.5, 8, 0.05).name('frequency');
+    gui.add(speed, 'value', 0, 3, 0.05).name('speed');
+    gui.add(material, 'wireframe');
+    if (innerWidth < 700) gui.close();
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    renderer.setAnimationLoop(() => {
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>
