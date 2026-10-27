@@ -53,7 +53,7 @@ const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const fmtDate = iso => { const [y, m, d] = iso.slice(0, 10).split('-').map(Number); return `${MONTHS[m - 1]} ${d}, ${y}`; };
 
-function layout({ title, desc, body, canonical, image = `${BASE}images/social-card.png` }) {
+function layout({ title, desc, body, canonical, image = `${BASE}images/social-card.png`, imageHeight = 630 }) {
   const ogImage = /^https?:/.test(image) ? image : `${SITE}${image}`;
   return `<!doctype html>
 <html lang="en">
@@ -68,7 +68,7 @@ function layout({ title, desc, body, canonical, image = `${BASE}images/social-ca
 <meta property="og:description" content="${esc(desc)}">
 <meta property="og:url" content="${SITE}${canonical}">
 <meta property="og:image" content="${esc(ogImage)}">
-<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="${Number(imageHeight) || 630}">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d12'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' text-anchor='middle' fill='%237cf5d4'%3E3D%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="${BASE}assets/style.css?v=2">
@@ -154,7 +154,7 @@ function partPage(p) {
   const soon = !next && planned.find(x => x.part === p.part + 1);
   const pager = `<nav class="pager">${prev ? `<a href="${BASE}${prev.slug}/">← Part ${prev.part}: ${esc(prev.short || prev.title)}</a>` : `<a href="${BASE}">← All parts</a>`}${next ? `<a href="${BASE}${next.slug}/">Part ${next.part}: ${esc(next.short || next.title)} →</a>` : soon ? `<span class="soon-next">Next: Part ${soon.part}, ${esc(soon.title)} (coming soon)</span>` : '<span></span>'}</nav>`;
   return layout({
-    title: `${p.title} — Mike Smahin`, desc: p.description || p.title, canonical: `${BASE}${p.slug}/`, image: p.image || undefined,
+    title: `${p.title} — Mike Smahin`, desc: p.description || p.title, canonical: `${BASE}${p.slug}/`, image: p.image || undefined, imageHeight: p.imageHeight || undefined,
     body: `<article class="post">
   <header class="post-head">
     <p class="eyebrow"><a href="${BASE}">← ${esc(series.title)} · all parts</a></p>

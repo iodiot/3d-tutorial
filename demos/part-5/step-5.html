@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 5 · A fresnel rim, noise, and a look at the generated shader</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+    .panel a { color: #7cf5d4; }
+    .hint { position: absolute; left: 12px; bottom: 12px; font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; pointer-events: none; }
+    .label { position: absolute; transform: translate(-50%, 0); font: 600 12px/1.3 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .8); border: 1px solid #3a4258; border-radius: 6px; padding: 3px 7px; white-space: nowrap; pointer-events: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel">Starting WebGPURenderer…</div>
+  <div id="code" class="panel code" hidden></div>
+  <div class="hint">Drag to orbit · "show generated shader" prints what TSL compiled to</div>
+  <style>
+    .code { left: auto; right: 12px; top: 120px; width: min(520px, calc(100% - 24px)); max-height: calc(100% - 200px); overflow: auto; font-size: 11px; line-height: 1.4; }
+    .code[hidden] { display: none; }
+  </style>
+  <script type="module">
+    import * as THREE from 'three/webgpu';
+    import { Fn, uniform, time, positionLocal, normalLocal, normalView, positionViewDirection, mx_fractal_noise_float, mix, oneMinus } from 'three/tsl';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(0, 0.3, 5.6);
+
+    // WebGPU if the browser has it, WebGL 2 if not. ?backend=webgl forces the fallback.
+    const params = new URLSearchParams(location.search);
+    const status = document.getElementById('status');
+
+    const renderer = new THREE.WebGPURenderer({ antialias: true, forceWebGL: params.get('backend') === 'webgl' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    try {
+      await renderer.init();   // async: asks the browser for a GPU device, or falls back
+    } catch (error) {
+      status.textContent = 'Sorry: this browser has neither WebGPU nor WebGL 2.\n' + error.message;
+      throw error;
+    }
+    const isWebGPU = renderer.backend.isWebGPUBackend === true;
+    const backendName = isWebGPU ? 'WebGPU (TSL compiled to WGSL)' : 'WebGL 2 fallback (TSL compiled to GLSL)';
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    const power = uniform(3.2);
+    const rimStrength = uniform(1.8);
+    const wobble = uniform(0.22);
+    const inner = uniform(new THREE.Color('#d9400f'));
+    const outer = uniform(new THREE.Color('#ffa726'));
+    const rimColor = uniform(new THREE.Color('#7cf5d4'));
+
+    // Fresnel: surfaces seen at a grazing angle glow. 0 when facing the camera, 1 at the silhouette.
+    const fresnel = Fn(([exponent]) => {
+      const facing = normalView.dot(positionViewDirection).saturate();
+      return oneMinus(facing).pow(exponent);
+    });
+
+    // Fractal noise, evaluated at the vertex position and slowly moving through 3D space
+    const noise = mx_fractal_noise_float(positionLocal.mul(1.4).add(time.mul(0.3)), 3, 2.0, 0.5);
+
+    const material = new THREE.MeshStandardNodeMaterial({ roughness: 0.5, metalness: 0.0 });
+    material.positionNode = positionLocal.add(normalLocal.mul(noise.mul(wobble)));   // push vertices along their normals
+    material.colorNode = mix(inner, outer, noise.mul(0.5).add(0.5));
+    material.emissiveNode = rimColor.mul(fresnel(power)).mul(rimStrength);           // glow added on top of the lighting
+
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(1.2, 128, 96), material);
+    scene.add(orb);
+
+    const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+    sun.position.set(3, 4, 3);
+    scene.add(sun, new THREE.HemisphereLight(0x9ec5ff, 0x1b1f2a, 0.35));
+
+    status.textContent = 'emissiveNode = rimColor * fresnel(power)\nrunning on: ' + backendName;
+
+    // Ask the renderer for the shader source it generated from the node graph
+    const codePanel = document.getElementById('code');
+    async function showShader() {
+      if (!codePanel.hidden) { codePanel.hidden = true; return; }
+      const { fragmentShader } = await renderer.debug.getShaderAsync(scene, camera, orb);
+      const language = isWebGPU ? 'WGSL' : 'GLSL';
+      codePanel.textContent = '// generated ' + language + ' fragment shader (' + fragmentShader.split('\n').length + ' lines)\n' + fragmentShader;
+      codePanel.hidden = false;
+      window.__shaderLines = fragmentShader.split('\n').length;
+    }
+
+    if (params.get('shader')) showShader();   // ?shader=1 opens the panel on load
+
+    const gui = new GUI({ title: 'Step 5' });
+    gui.add(power, 'value', 0.5, 6, 0.05).name('fresnel power');
+    gui.add(rimStrength, 'value', 0, 5, 0.05).name('rim strength');
+    gui.add(wobble, 'value', 0, 0.5, 0.01).name('wobble');
+    gui.addColor({ rim: '#7cf5d4' }, 'rim').onChange((v) => rimColor.value.set(v));
+    gui.add({ showShader }, 'showShader').name('show generated shader');
+    if (innerWidth < 700) gui.close();
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    renderer.setAnimationLoop((t) => {
+      orb.rotation.y = t / 7000;
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

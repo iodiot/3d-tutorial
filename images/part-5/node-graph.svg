@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 430" width="880" height="430" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs><marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9aa3b5"/></marker><marker id="gs" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9aa3b5"/></marker></defs>
+  <rect width="880" height="430" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">A TSL COLOUR AS A NODE GRAPH (STEP 3)</text>
+  <rect x="32" y="70" width="140" height="34" rx="8" fill="#1b2030"  stroke="#7cf5d4" stroke-width="1.5" />
+  <text x="102" y="92" fill="#e7eaf0" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle" >uv().y</text>
+  <rect x="32" y="118" width="140" height="34" rx="8" fill="#1b2030"  stroke="#f2cc60" stroke-width="1.5" />
+  <text x="102" y="140" fill="#e7eaf0" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle" >bottom, top</text>
+  <rect x="32" y="190" width="140" height="34" rx="8" fill="#1b2030"  stroke="#7cf5d4" stroke-width="1.5" />
+  <text x="102" y="212" fill="#e7eaf0" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle" >uv().x</text>
+  <rect x="32" y="238" width="140" height="34" rx="8" fill="#1b2030"  stroke="#f2cc60" stroke-width="1.5" />
+  <text x="102" y="260" fill="#e7eaf0" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle" >stripes</text>
+  <rect x="32" y="300" width="140" height="34" rx="8" fill="#1b2030"  stroke="#7cf5d4" stroke-width="1.5" />
+  <text x="102" y="322" fill="#e7eaf0" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle" >time</text>
+  <rect x="32" y="348" width="140" height="34" rx="8" fill="#1b2030"  stroke="#f2cc60" stroke-width="1.5" />
+  <text x="102" y="370" fill="#e7eaf0" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle" >speed</text>
+  <rect x="200" y="94" width="140" height="34" rx="8" fill="#1b2030"  stroke="#c79bff" stroke-width="1.5" />
+  <text x="270" y="116" fill="#e7eaf0" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle" >mix</text>
+  <rect x="200" y="214" width="160" height="34" rx="8" fill="#1b2030"  stroke="#c79bff" stroke-width="1.5" />
+  <text x="280" y="236" fill="#e7eaf0" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle" >uv.x × stripes × 2π</text>
+  <rect x="200" y="324" width="140" height="34" rx="8" fill="#1b2030"  stroke="#c79bff" stroke-width="1.5" />
+  <text x="270" y="346" fill="#e7eaf0" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle" >time × speed</text>
+  <path d="M172 87L200 104" fill="none" stroke="#9aa3b5" stroke-width="1.5"  marker-end="url(#g)" />
+  <path d="M172 135L200 111" fill="none" stroke="#9aa3b5" stroke-width="1.5"  marker-end="url(#g)" />
+  <path d="M172 207L200 226" fill="none" stroke="#9aa3b5" stroke-width="1.5"  marker-end="url(#g)" />
+  <path d="M172 255L200 238" fill="none" stroke="#9aa3b5" stroke-width="1.5"  marker-end="url(#g)" />
+  <path d="M172 317L200 336" fill="none" stroke="#9aa3b5" stroke-width="1.5"  marker-end="url(#g)" />
+  <path d="M172 365L200 348" fill="none" stroke="#9aa3b5" stroke-width="1.5"  marker-end="url(#g)" />
+  <rect x="400" y="270" width="100" height="34" rx="8" fill="#1b2030"  stroke="#c79bff" stroke-width="1.5" />
+  <text x="450" y="292" fill="#e7eaf0" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle" >add</text>
+  <path d="M360 231L400 282" fill="none" stroke="#9aa3b5" stroke-width="1.5"  marker-end="url(#g)" />
+  <path d="M340 341L400 296" fill="none" stroke="#9aa3b5" stroke-width="1.5"  marker-end="url(#g)" />
+  <rect x="540" y="270" width="160" height="34" rx="8" fill="#1b2030"  stroke="#c79bff" stroke-width="1.5" />
+  <text x="620" y="292" fill="#e7eaf0" font-size="12" font-family="ui-monospace,Menlo,Consolas,monospace" text-anchor="middle" >smoothstep(sin(…))</text>
+  <path d="M500 287H540" fill="none" stroke="#9aa3b5" stroke-width="1.5"  marker-end="url(#g)" />
+  <rect x="712" y="84" width="148" height="100" rx="12" fill="#1b2030"  stroke="#ff8a4c" stroke-width="2" />
+  <text x="730" y="108" fill="#ff8a4c" font-size="13" font-weight="700" >colorNode</text>
+  <text x="730" y="132" fill="#e7eaf0" font-size="10.5" font-family="ui-monospace,Menlo,Consolas,monospace" >mix(gradient,</text>
+  <text x="730" y="147" fill="#e7eaf0" font-size="10.5" font-family="ui-monospace,Menlo,Consolas,monospace" >  gradient × 0.25,</text>
+  <text x="730" y="162" fill="#e7eaf0" font-size="10.5" font-family="ui-monospace,Menlo,Consolas,monospace" >  band)</text>
+  <path d="M340 111H712" fill="none" stroke="#9aa3b5" stroke-width="1.5"  marker-end="url(#g)" />
+  <text x="380" y="104" fill="#9aa3b5" font-size="12"   >gradient</text>
+  <path d="M700 287H786V184" fill="none" stroke="#9aa3b5" stroke-width="1.5"  marker-end="url(#g)" />
+  <text x="640" y="260" fill="#9aa3b5" font-size="12"   >band</text>
+  <text x="32" y="410" fill="#6b7386" font-size="12"   >Yellow: uniforms you change from JavaScript. Green: built-in nodes. Purple: maths. Orange: the material slot that receives the result.</text>
+</svg>

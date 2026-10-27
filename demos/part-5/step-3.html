@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 3 · Your first TSL nodes: colorNode, uv, time and uniforms</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+    .panel a { color: #7cf5d4; }
+    .hint { position: absolute; left: 12px; bottom: 12px; font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; pointer-events: none; }
+    .label { position: absolute; transform: translate(-50%, 0); font: 600 12px/1.3 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .8); border: 1px solid #3a4258; border-radius: 6px; padding: 3px 7px; white-space: nowrap; pointer-events: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel">Starting WebGPURenderer…</div>
+  <div class="hint">Drag to orbit · the colour is a node graph, not a texture</div>
+  <script type="module">
+    import * as THREE from 'three/webgpu';
+    import { uniform, uv, time, sin, mix, smoothstep } from 'three/tsl';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1b1f2a);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(0, 0.4, 4.6);
+
+    // WebGPU if the browser has it, WebGL 2 if not. ?backend=webgl forces the fallback.
+    const params = new URLSearchParams(location.search);
+    const status = document.getElementById('status');
+
+    const renderer = new THREE.WebGPURenderer({ antialias: true, forceWebGL: params.get('backend') === 'webgl' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    try {
+      await renderer.init();   // async: asks the browser for a GPU device, or falls back
+    } catch (error) {
+      status.textContent = 'Sorry: this browser has neither WebGPU nor WebGL 2.\n' + error.message;
+      throw error;
+    }
+    const isWebGPU = renderer.backend.isWebGPUBackend === true;
+    const backendName = isWebGPU ? 'WebGPU (TSL compiled to WGSL)' : 'WebGL 2 fallback (TSL compiled to GLSL)';
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // Uniforms: values you can change from JavaScript while the shader runs
+    const top = uniform(new THREE.Color('#7cf5d4'));
+    const bottom = uniform(new THREE.Color('#5b2bd6'));
+    const stripes = uniform(14);
+    const speed = uniform(1.5);
+
+    // Nodes: small pieces of shader, combined with JavaScript method calls
+    const gradient = mix(bottom, top, uv().y);                              // blend by height on the sphere
+    const wave = sin(uv().x.mul(stripes).mul(Math.PI * 2).add(time.mul(speed)));   // -1..1, drifting with time
+    const band = smoothstep(0.55, 0.95, wave);                              // thin bright bands
+    const finalColor = mix(gradient, gradient.mul(0.25), band);               // darken the bands
+
+    const material = new THREE.MeshStandardNodeMaterial({ roughness: 0.4, metalness: 0.1 });
+    material.colorNode = finalColor;     // replaces the plain `color` of the material
+
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(1.3, 96, 64), material);
+    scene.add(ball);
+
+    const sun = new THREE.DirectionalLight(0xffffff, 3);
+    sun.position.set(3, 4, 3);
+    scene.add(sun, new THREE.HemisphereLight(0x9ec5ff, 0x1b1f2a, 1.2));
+
+    status.textContent = 'colorNode = mix(gradient, darker, bands)\nrunning on: ' + backendName;
+
+    const gui = new GUI({ title: 'Step 3' });
+    gui.addColor({ top: '#7cf5d4' }, 'top').onChange((v) => top.value.set(v));
+    gui.addColor({ bottom: '#5b2bd6' }, 'bottom').onChange((v) => bottom.value.set(v));
+    gui.add(stripes, 'value', 2, 40, 1).name('stripes');
+    gui.add(speed, 'value', -4, 4, 0.1).name('speed');
+    if (innerWidth < 700) gui.close();
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    renderer.setAnimationLoop((t) => {
+      ball.rotation.y = t / 6000;
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

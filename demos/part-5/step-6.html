@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 6 · Compute shaders: 60,000 GPU particles</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+    .panel a { color: #7cf5d4; }
+    .hint { position: absolute; left: 12px; bottom: 12px; font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; pointer-events: none; }
+    .label { position: absolute; transform: translate(-50%, 0); font: 600 12px/1.3 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .8); border: 1px solid #3a4258; border-radius: 6px; padding: 3px 7px; white-space: nowrap; pointer-events: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel">Starting WebGPURenderer…</div>
+  <div class="hint">Move the pointer to steer the attractor · drag to orbit</div>
+  <script type="module">
+    import * as THREE from 'three/webgpu';
+    import { Fn, uniform, instancedArray, instanceIndex, hash, vec3, mix, float, shapeCircle } from 'three/tsl';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0d14);
+
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 200);
+    camera.position.set(0, 7, 13);
+
+    // WebGPU if the browser has it, WebGL 2 if not. ?backend=webgl forces the fallback.
+    const params = new URLSearchParams(location.search);
+    const status = document.getElementById('status');
+
+    const renderer = new THREE.WebGPURenderer({ antialias: true, forceWebGL: params.get('backend') === 'webgl' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    try {
+      await renderer.init();   // async: asks the browser for a GPU device, or falls back
+    } catch (error) {
+      status.textContent = 'Sorry: this browser has neither WebGPU nor WebGL 2.\n' + error.message;
+      throw error;
+    }
+    const isWebGPU = renderer.backend.isWebGPUBackend === true;
+    const backendName = isWebGPU ? 'WebGPU (TSL compiled to WGSL)' : 'WebGL 2 fallback (TSL compiled to GLSL)';
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    const COUNT = Number(params.get('count')) || 60000;   // ?count=10000 for a lighter run
+
+    // Two buffers that live on the GPU: one vec3 position and one vec3 velocity per particle
+    const positions = instancedArray(COUNT, 'vec3');
+    const velocities = instancedArray(COUNT, 'vec3');
+
+    // Uniforms the compute shader reads every frame
+    const attractor = uniform(new THREE.Vector3(0, 0, 0));
+    const pull = uniform(9);
+    const swirl = uniform(7);
+    const drag = uniform(0.8);
+    const dt = uniform(1 / 60);   // seconds since the last frame, set from JavaScript
+
+    // Compute pass 1 (runs once): scatter the particles randomly in a box.
+    // The function body runs COUNT times, once per particle, all in parallel. instanceIndex says which one we are.
+    const init = Fn(() => {
+      const position = positions.element(instanceIndex);
+      position.assign(vec3(
+        hash(instanceIndex).sub(0.5),
+        hash(instanceIndex.add(1)).sub(0.5),
+        hash(instanceIndex.add(2)).sub(0.5),
+      ).mul(12));
+    })().compute(COUNT);
+
+    // Compute pass 2 (runs every frame): pull towards the attractor, spin around it, move
+    const update = Fn(() => {
+      const position = positions.element(instanceIndex);
+      const velocity = velocities.element(instanceIndex);
+
+      const toAttractor = attractor.sub(position);
+      const distance = toAttractor.length().max(0.5);
+      const direction = toAttractor.div(distance);
+
+      // sideways push (perpendicular to the direction and to "up") makes the cloud orbit
+      const sideways = vec3(direction.z.negate(), 0, direction.x);
+
+      // every particle gets its own strength, so they settle on different orbits instead of one thin ring
+      const strength = hash(instanceIndex.add(7)).mul(0.9).add(0.55);
+      const force = direction.mul(pull).add(sideways.mul(swirl)).mul(strength).div(distance.add(1));
+      velocity.addAssign(force.mul(dt));
+      velocity.mulAssign(float(1).sub(drag.mul(dt)));
+      position.addAssign(velocity.mul(dt));
+    })().compute(COUNT);
+
+    // Drawing: a SpriteNodeMaterial reads the same position buffer as a vertex attribute
+    const material = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    material.positionNode = positions.toAttribute();
+    material.scaleNode = uniform(0.045);
+    // colour by distance to the attractor: warm in the middle, cool outside
+    material.colorNode = mix(vec3(1.0, 0.5, 0.2), vec3(0.2, 0.55, 1.0), positions.toAttribute().sub(attractor).length().mul(0.16).saturate());
+    material.opacityNode = shapeCircle().mul(0.4);
+
+    const particles = new THREE.Sprite(material);
+    particles.count = COUNT;
+    particles.frustumCulled = false;
+    scene.add(particles);
+
+    renderer.compute(init);
+
+    status.textContent = COUNT.toLocaleString('en') + ' particles, simulated on the GPU\nrunning on: ' + backendName;
+
+    // Steer the attractor with the pointer: ray from the camera to the plane y = 0
+    const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const hit = new THREE.Vector3();
+    let lastTime = 0;
+    let lastMove = -Infinity;
+    renderer.domElement.addEventListener('pointermove', (event) => {
+      pointer.set((event.clientX / innerWidth) * 2 - 1, -(event.clientY / innerHeight) * 2 + 1);
+      lastMove = performance.now();
+    });
+
+    const gui = new GUI({ title: 'Step 6' });
+    gui.add(pull, 'value', 0, 30, 0.1).name('pull');
+    gui.add(swirl, 'value', 0, 20, 0.1).name('swirl');
+    gui.add(drag, 'value', 0, 3, 0.05).name('drag');
+    gui.add({ scatter: () => renderer.compute(init) }, 'scatter');
+    if (innerWidth < 700) gui.close();
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    renderer.setAnimationLoop((t) => {
+      if (performance.now() - lastMove < 3000) {
+        raycaster.setFromCamera(pointer, camera);
+        if (raycaster.ray.intersectPlane(ground, hit)) attractor.value.copy(hit);
+      } else {
+        attractor.value.set(Math.sin(t / 1500) * 4, Math.sin(t / 2300) * 1.5, Math.cos(t / 1900) * 4);   // wander by itself
+      }
+      controls.update();
+      dt.value = Math.min((t - lastTime) / 1000, 1 / 30);   // never take a huge step, e.g. after a tab switch
+      lastTime = t;
+      renderer.compute(update);   // 1. run the simulation on the GPU
+      renderer.render(scene, camera);   // 2. draw the result
+    });
+  </script>
+</body>
+</html>

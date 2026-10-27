@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Three.js from Scratch, Part 5 · WebGPU and TSL</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+    .panel a { color: #7cf5d4; }
+    .hint { position: absolute; left: 12px; bottom: 12px; font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; pointer-events: none; }
+    .label { position: absolute; transform: translate(-50%, 0); font: 600 12px/1.3 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .8); border: 1px solid #3a4258; border-radius: 6px; padding: 3px 7px; white-space: nowrap; pointer-events: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+        "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel">Starting WebGPURenderer…</div>
+  <div id="code" class="panel code" hidden></div>
+  <div class="hint">Drag to orbit · move the pointer to steer the glowing particles · add ?backend=webgl to force the fallback</div>
+  <style>
+    .code { left: auto; right: 12px; top: auto; bottom: 12px; width: min(560px, calc(100% - 24px)); height: 46%; overflow: auto; font-size: 11px; line-height: 1.4; }
+    .code[hidden] { display: none; }
+  </style>
+  <script type="module">
+    import * as THREE from 'three/webgpu';
+    import { Fn, If, uniform, time, vec2, vec3, float, sin, mix, smoothstep, normalize, oneMinus, varying, hash,
+      positionLocal, normalLocal, normalView, positionViewDirection, transformNormalToView,
+      instancedArray, instanceIndex, shapeCircle, mx_fractal_noise_float } from 'three/tsl';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0d14);
+    scene.fog = new THREE.Fog(0x0b0d14, 12, 34);
+
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(0, 4.2, 11);
+
+    // WebGPU if the browser has it, WebGL 2 if not. ?backend=webgl forces the fallback.
+    const params = new URLSearchParams(location.search);
+    const status = document.getElementById('status');
+
+    const renderer = new THREE.WebGPURenderer({ antialias: true, forceWebGL: params.get('backend') === 'webgl' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    try {
+      await renderer.init();   // async: asks the browser for a GPU device, or falls back
+    } catch (error) {
+      status.textContent = 'Sorry: this browser has neither WebGPU nor WebGL 2.\n' + error.message;
+      throw error;
+    }
+    const isWebGPU = renderer.backend.isWebGPUBackend === true;
+    const backendName = isWebGPU ? 'WebGPU (TSL compiled to WGSL)' : 'WebGL 2 fallback (TSL compiled to GLSL)';
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1.2, 0);
+    controls.enableDamping = true;
+    controls.maxPolarAngle = Math.PI * 0.49;
+    controls.update();
+
+    // ---------- Shared pieces ----------
+
+    // Fresnel: 0 when a surface faces the camera, 1 at grazing angles. Used by the water and the orb.
+    const fresnel = Fn(([normal, power]) => {
+      const facing = normal.dot(positionViewDirection).saturate();
+      return oneMinus(facing).pow(power);
+    });
+
+    // ---------- Water: positionNode + normalNode + colorNode + emissiveNode ----------
+
+    const amplitude = uniform(0.35);
+    const frequency = uniform(0.9);
+    const speed = uniform(1.0);
+    const deep = uniform(new THREE.Color('#041b45'));
+    const crest = uniform(new THREE.Color('#2a9d9a'));
+    const sky = uniform(new THREE.Color('#8fb8ff'));
+
+    const waveHeight = Fn(([p]) => {
+      const t = time.mul(speed);
+      const a = sin(p.x.mul(frequency).add(t)).mul(0.5);
+      const b = sin(p.y.mul(frequency).mul(0.8).add(t.mul(1.3))).mul(0.5);
+      const c = sin(p.x.add(p.y).mul(frequency).mul(1.7).add(t.mul(1.9))).mul(0.25);
+      return a.add(b).add(c).mul(amplitude);
+    });
+
+    const p = positionLocal.xy;
+    const h = waveHeight(p);
+    const e = 0.02;
+    const slope = normalize(vec3(h.sub(waveHeight(p.add(vec2(e, 0)))), h.sub(waveHeight(p.add(vec2(0, e)))), e));
+    const waterNormal = transformNormalToView(varying(slope)).normalize();
+
+    const waterMaterial = new THREE.MeshStandardNodeMaterial({ roughness: 0.18, metalness: 0.0 });
+    waterMaterial.positionNode = positionLocal.add(vec3(0, 0, h));
+    waterMaterial.normalNode = waterNormal;
+    waterMaterial.colorNode = mix(deep, crest, smoothstep(amplitude.mul(-0.3), amplitude.mul(0.9), varying(h)));
+    waterMaterial.emissiveNode = sky.mul(fresnel(waterNormal, 4)).mul(0.4);   // reflected sky at grazing angles
+
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(40, 40, 320, 320), waterMaterial);
+    water.rotation.x = -Math.PI / 2;
+    scene.add(water);
+
+    // ---------- Orb: noise displacement + fresnel rim ----------
+
+    const wobble = uniform(0.2);
+    const rimPower = uniform(3.0);
+    const rimColor = uniform(new THREE.Color('#7cf5d4'));
+
+    const noise = mx_fractal_noise_float(positionLocal.mul(1.4).add(time.mul(0.3)), 3, 2.0, 0.5);
+
+    const orbMaterial = new THREE.MeshStandardNodeMaterial({ roughness: 0.5, metalness: 0.0 });
+    orbMaterial.positionNode = positionLocal.add(normalLocal.mul(noise.mul(wobble)));
+    const orbColor = mix(vec3(0.95, 0.28, 0.05), vec3(1.0, 0.7, 0.2), noise.mul(0.5).add(0.5));
+    orbMaterial.colorNode = orbColor;
+    orbMaterial.emissiveNode = rimColor.mul(fresnel(normalView, rimPower)).mul(1.8).add(orbColor.mul(0.35));   // rim glow + a little self-light
+
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.85, 128, 96), orbMaterial);
+    scene.add(orb);
+
+    // ---------- Particles: compute shaders ----------
+
+    const COUNT = Number(params.get('count')) || 40000;   // ?count=10000 for a lighter run
+    const positions = instancedArray(COUNT, 'vec3');
+    const velocities = instancedArray(COUNT, 'vec3');
+
+    const attractor = uniform(new THREE.Vector3(0, 1.6, 0));
+    const pull = uniform(9);
+    const swirl = uniform(7);
+    const drag = uniform(0.8);
+    const dt = uniform(1 / 60);
+
+    const init = Fn(() => {
+      const position = positions.element(instanceIndex);
+      position.assign(vec3(
+        hash(instanceIndex).sub(0.5).mul(12),
+        hash(instanceIndex.add(1)).mul(5).add(0.6),
+        hash(instanceIndex.add(2)).sub(0.5).mul(12),
+      ));
+    })().compute(COUNT);
+
+    const update = Fn(() => {
+      const position = positions.element(instanceIndex);
+      const velocity = velocities.element(instanceIndex);
+
+      const toAttractor = attractor.sub(position);
+      const distance = toAttractor.length().max(0.5);
+      const direction = toAttractor.div(distance);
+      const sideways = vec3(direction.z.negate(), 0, direction.x);
+      const strength = hash(instanceIndex.add(7)).mul(0.9).add(0.55);
+
+      velocity.addAssign(direction.mul(pull).add(sideways.mul(swirl)).mul(strength).div(distance.add(1)).mul(dt));
+      velocity.mulAssign(float(1).sub(drag.mul(dt)));
+      position.addAssign(velocity.mul(dt));
+
+      // stay above the water
+      If(position.y.lessThan(0.5), () => {
+        position.y.assign(0.5);
+        velocity.y.assign(velocity.y.abs().mul(0.3));
+      });
+    })().compute(COUNT);
+
+    const sparkMaterial = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    sparkMaterial.positionNode = positions.toAttribute();
+    sparkMaterial.scaleNode = uniform(0.032);
+    sparkMaterial.colorNode = mix(vec3(1.0, 0.55, 0.2), vec3(0.25, 0.6, 1.0), positions.toAttribute().sub(attractor).length().mul(0.18).saturate());
+    sparkMaterial.opacityNode = shapeCircle().mul(0.3);
+
+    const sparks = new THREE.Sprite(sparkMaterial);
+    sparks.count = COUNT;
+    sparks.frustumCulled = false;
+    scene.add(sparks);
+
+    renderer.compute(init);
+
+    // ---------- Lights ----------
+
+    const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+    sun.position.set(-4, 5, 3);
+    const glow = new THREE.PointLight(0xffa24a, 22, 14, 2);
+    scene.add(sun, glow, new THREE.HemisphereLight(0x9ec5ff, 0x0b0d14, 0.4));
+
+    // ---------- Status, shader viewer and the panel ----------
+
+    status.textContent = 'Three.js from Scratch · Part 5\n' + COUNT.toLocaleString('en') + ' GPU particles · running on: ' + backendName;
+
+    const codePanel = document.getElementById('code');
+    async function showShader() {
+      if (!codePanel.hidden) { codePanel.hidden = true; return; }
+      const { fragmentShader } = await renderer.debug.getShaderAsync(scene, camera, water);
+      codePanel.textContent = '// generated ' + (isWebGPU ? 'WGSL' : 'GLSL') + ' fragment shader of the water (' + fragmentShader.split('\n').length + ' lines)\n' + fragmentShader;
+      codePanel.hidden = false;
+    }
+
+    const gui = new GUI({ title: 'Part 5 · WebGPU and TSL' });
+    const waterFolder = gui.addFolder('Water');
+    waterFolder.add(amplitude, 'value', 0, 0.8, 0.01).name('amplitude');
+    waterFolder.add(frequency, 'value', 0.2, 3, 0.01).name('frequency');
+    waterFolder.add(speed, 'value', 0, 3, 0.05).name('speed');
+    const orbFolder = gui.addFolder('Orb');
+    orbFolder.add(wobble, 'value', 0, 0.45, 0.01).name('wobble');
+    orbFolder.add(rimPower, 'value', 0.5, 6, 0.05).name('fresnel power');
+    orbFolder.addColor({ rim: '#7cf5d4' }, 'rim').onChange((v) => rimColor.value.set(v));
+    const sparkFolder = gui.addFolder('Particles (compute)');
+    sparkFolder.add(pull, 'value', 0, 30, 0.1).name('pull');
+    sparkFolder.add(swirl, 'value', 0, 20, 0.1).name('swirl');
+    sparkFolder.add(drag, 'value', 0, 3, 0.05).name('drag');
+    sparkFolder.add({ scatter: () => renderer.compute(init) }, 'scatter');
+    gui.add({ showShader }, 'showShader').name('show generated shader');
+    if (innerWidth < 700) gui.close();
+
+    // ---------- Interaction ----------
+
+    const orbitPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -1.6);
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const hit = new THREE.Vector3();
+    const home = new THREE.Vector3();
+    let lastMove = -Infinity;
+    renderer.domElement.addEventListener('pointermove', (event) => {
+      pointer.set((event.clientX / innerWidth) * 2 - 1, -(event.clientY / innerHeight) * 2 + 1);
+      lastMove = performance.now();
+    });
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    let lastTime = 0;
+    renderer.setAnimationLoop((t) => {
+      const seconds = t / 1000;
+      orb.position.y = 1.6 + Math.sin(seconds * 1.1) * 0.12;
+      orb.rotation.y = seconds * 0.15;
+      glow.position.copy(orb.position);
+
+      // the particles circle the orb, or the pointer while it is moving
+      home.copy(orb.position);
+      raycaster.setFromCamera(pointer, camera);
+      const aiming = performance.now() - lastMove < 3000 && raycaster.ray.intersectPlane(orbitPlane, hit);
+      attractor.value.lerp(aiming ? hit.clampLength(0, 9) : home, 0.08);
+
+      controls.update();
+      dt.value = Math.min((t - lastTime) / 1000, 1 / 30);
+      lastTime = t;
+      renderer.compute(update);          // 1. simulate on the GPU
+      renderer.render(scene, camera);    // 2. draw
+    });
+  </script>
+</body>
+</html>

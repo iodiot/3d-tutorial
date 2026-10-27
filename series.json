@@ -4,9 +4,9 @@
   "lead": "A step-by-step series for frontend developers: from a first lit cube to shaders, WebGPU and compute. Every part comes with diagrams, screenshots and a live demo you can open in your browser.",
   "planned": [
     {
-      "part": 5,
-      "title": "WebGPU and TSL",
-      "about": "WebGPURenderer, node materials, the TSL shading language and compute."
+      "part": 6,
+      "title": "Post-processing",
+      "about": "Render to a texture first, then run effects over the whole image: bloom and colour grading with TSL."
     }
   ],
   "support": {
