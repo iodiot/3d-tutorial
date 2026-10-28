@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Three.js from Scratch, Part 6: Post-Processing and Bloom — Mike Smahin</title>
+<meta name="description" content="Render the scene to a texture first, then change the whole picture: render targets and ping-pong buffers, EffectComposer with RenderPass, UnrealBloomPass, OutputPass, a custom lens ShaderPass and FXAA/SMAA, why pass order and tone mapping matter, and the same chain on WebGPURenderer with RenderPipeline, pass() and TSL bloom, including selective bloom with MRT. With diagrams, screenshots and a live demo.">
+<link rel="canonical" href="https://iodiot.github.io/3d-tutorial/part-6-post-processing/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Three.js from Scratch, Part 6: Post-Processing and Bloom — Mike Smahin">
+<meta property="og:description" content="Render the scene to a texture first, then change the whole picture: render targets and ping-pong buffers, EffectComposer with RenderPass, UnrealBloomPass, OutputPass, a custom lens ShaderPass and FXAA/SMAA, why pass order and tone mapping matter, and the same chain on WebGPURenderer with RenderPipeline, pass() and TSL bloom, including selective bloom with MRT. With diagrams, screenshots and a live demo.">
+<meta property="og:url" content="https://iodiot.github.io/3d-tutorial/part-6-post-processing/">
+<meta property="og:image" content="https://iodiot.github.io/3d-tutorial/images/part-6/social-card.png">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="675">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d12'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' text-anchor='middle' fill='%237cf5d4'%3E3D%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/3d-tutorial/assets/style.css?v=2">
+</head>
+<body>
+<div class="bg"></div>
+<header class="nav">
+  <a class="brand" href="/">Mike Smahin</a>
+  <nav>
+    <a href="/3d-tutorial/">3D Tutorial</a>
+    <a href="/blog/">Blog</a>
+    <a href="/">Portfolio</a>
+  </nav>
+</header>
+<main>
+<article class="post">
+  <header class="post-head">
+    <p class="eyebrow"><a href="/3d-tutorial/">← Three.js from Scratch · all parts</a></p>
+    <h1>Three.js from Scratch, Part 6: Post-Processing and Bloom</h1>
+    <p class="meta-line"><time datetime="2026-10-28">Oct 28, 2026</time> · Mike Smahin</p>
+    <ul class="tags"><li class="topic">part 6</li><li>three.js</li><li>post-processing</li><li>bloom</li><li>webgpu</li><li>tsl</li></ul>
+  </header>
+  <div class="prose"><p>Everything we have drawn so far went straight to the screen: the renderer drew each mesh, pixel by pixel, into the canvas, and that was the frame. That is enough for a lot of things. But some looks cannot be made one mesh at a time. A neon tube that <strong>glows</strong> spills light onto the pixels around it, including pixels that belong to other objects. A camera lens <strong>darkens the corners</strong> of the whole picture, not of one object. Smoothing jagged edges, colour grading, depth of field, motion blur: all of these work on the finished image.</p>
+<p>That is <strong>post-processing</strong>: render the scene into a texture first, then run one or more full-screen shaders over that texture before anything reaches the screen. In this part we build it up from the bottom. First by hand, with a render target and one quad. Then with Three.js's <code>EffectComposer</code> and its passes: bloom, a custom lens shader written in the GLSL of <a href="/3d-tutorial/part-4-shaders/">Part 4</a>, the output pass and anti-aliasing. Then we rebuild the same chain on <code>WebGPURenderer</code> with TSL nodes from <a href="/3d-tutorial/part-5-webgpu-tsl/">Part 5</a>, and finish with a trick the node version makes easy: bloom on only what glows. Open the panel and switch the effects on and off, or drag <strong>split</strong> to compare with the raw render:</p>
+<div class="demo">
+  <iframe src="/3d-tutorial/demos/part-6/" title="Live demo: a chrome torus knot inside three neon rings, pink, cyan and orange, with small glowing sparks orbiting it and white pillars around it, on a dark grid floor. The neon glows with bloom, the corners are darkened by a vignette and edges have a slight colour fringe. A panel has folders for bloom, lens, colour grade and output, and a split slider to compare with the raw render." loading="lazy"></iframe>
+</div>
+<p class="demo-links"><a href="/3d-tutorial/demos/part-6/" target="_blank" rel="noopener">Open the demo full screen ↗</a> · <a href="https://github.com/iodiot/3d-tutorial/tree/main/demos/part-6" target="_blank" rel="noopener">Source on GitHub ↗</a></p>
+<blockquote>
+<p>Everything uses Three.js <strong>r186</strong> (npm version <code>0.186.1</code>). Steps 1 to 4 use the classic <code>WebGLRenderer</code>, with the import map from Parts 1 to 4. Steps 5 and 6 and the final demo use <code>WebGPURenderer</code> and the import map from Part 5, and fall back to WebGL 2 when the browser has no WebGPU: add <code>?backend=webgl</code> to force it. One name changed recently: the class Part 5 called &quot;node-based post-processing&quot;, <code>PostProcessing</code>, was <strong>renamed <code>RenderPipeline</code> in r183</strong>. The old name still works in r186 but is deprecated, so older tutorials and the new docs disagree. This article uses <code>RenderPipeline</code>.</p>
+</blockquote>
+<h2>The scene</h2>
+<p>All the demos in this part share one small scene, made to show off the effects: a chrome torus knot, three thin neon rings around it, eight small glowing sparks, six white pillars and a grid floor. Two things about it matter for later:</p>
+<ul>
+<li><strong>The neon is brighter than white.</strong> The rings use a black base colour and an emissive colour with <code>emissiveIntensity: 3</code>, the sparks 6. So their pixels come out of the lighting calculation with values like 3.0 or 6.0, not 1.0. On a screen both look like &quot;fully on&quot;, but the difference is still in the numbers, and bloom will use it.</li>
+<li><strong>The pillars are white, but they do not glow.</strong> They are bright only because the sun hits them. In the last step we will teach the bloom to tell the two kinds of bright apart.</li>
+</ul>
+<p>The thin lines of the grid are there on purpose too: they are where you will see jagged edges, and where anti-aliasing has to do its job.</p>
+<h2>Step 1: a render target, and one full-screen quad</h2>
+<p>Normally <code>renderer.render(scene, camera)</code> draws into the canvas. A <strong>render target</strong> is somewhere else to draw: an off-screen texture with the same kind of colour and depth buffers as the canvas. You point the renderer at it, render, and afterwards the picture is a texture you can use like any other, for example as a uniform in a shader.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-6/render-target.svg" alt="Diagram. Pass 1: the scene and camera are drawn with renderer.setRenderTarget(target) and renderer.render(scene, camera) into a render target: a texture you can draw into, width times height pixels of colour, HalfFloat so values above 1.0 survive, with a depth buffer and optional MSAA samples. Pass 2: with renderer.setRenderTarget(null), a full-screen quad, two triangles covering the screen, is drawn to the canvas. Its fragment shader runs once per pixel and reads the texture with texture2D(tDiffuse, vUv), changes the colour and outputs it. A footer says every post-processing effect is this, repeated: render to a texture, then run a shader over that texture." width="940" height="410" loading="lazy">
+</figure>
+<p>Creating one takes a size and a few options:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> size = renderer.<span class="hljs-title function_">getDrawingBufferSize</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector2</span>());   <span class="hljs-comment">// canvas size in device pixels</span>
+<span class="hljs-keyword">const</span> target = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGLRenderTarget</span>(size.<span class="hljs-property">x</span>, size.<span class="hljs-property">y</span>, {
+  <span class="hljs-attr">type</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">HalfFloatType</span>,   <span class="hljs-comment">// 16-bit floats: values above 1.0 survive</span>
+  <span class="hljs-attr">samples</span>: <span class="hljs-number">4</span>,                  <span class="hljs-comment">// MSAA, so edges stay smooth</span>
+});
+</code></pre>
+<p>Two options are worth a closer look:</p>
+<ul>
+<li><strong><code>type: THREE.HalfFloatType</code>.</strong> The default render target stores 8 bits per channel, 0 to 255, so everything above 1.0 is clipped, exactly like the screen. Half floats keep values like 3.0, so the neon stays &quot;brighter than white&quot; inside the texture. For post-processing that is almost always what you want.</li>
+<li><strong><code>samples: 4</code>.</strong> The <code>antialias: true</code> you pass to the renderer only applies to the canvas. A render target has its own buffers, so if you want MSAA (multisample anti-aliasing) there, you ask for it here.</li>
+</ul>
+<p>The second half is the <strong>full-screen quad</strong>: a <code>PlaneGeometry(2, 2)</code> whose corners are at -1 and +1, which is exactly the corners of the screen in clip space (the coordinate system <code>gl_Position</code> uses, from Part 4). So the vertex shader does not need a camera at all:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> effect = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">ShaderMaterial</span>({
+  <span class="hljs-attr">uniforms</span>: {
+    <span class="hljs-attr">tDiffuse</span>: { <span class="hljs-attr">value</span>: target.<span class="hljs-property">texture</span> },   <span class="hljs-comment">// the picture we just rendered</span>
+    <span class="hljs-attr">mode</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">1</span> },
+    <span class="hljs-attr">cells</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">140</span> },
+  },
+  <span class="hljs-attr">vertexShader</span>: <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = vec4(position.xy, 0.0, 1.0);   // already in clip space
+    }`</span>,
+  <span class="hljs-attr">fragmentShader</span>: <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+    uniform sampler2D tDiffuse;
+    uniform int mode;
+    uniform float cells;
+    varying vec2 vUv;
+    void main() {
+      vec2 uv = vUv;
+      if (mode == 2) uv = (floor(uv * cells) + 0.5) / cells;   // pixelate: sample the centre of each cell
+      vec4 color = texture2D(tDiffuse, uv);
+      if (mode == 1) color.rgb = vec3(dot(color.rgb, vec3(0.2126, 0.7152, 0.0722)));   // greyscale
+      gl_FragColor = color;
+      #include &lt;tonemapping_fragment&gt;
+      #include &lt;colorspace_fragment&gt;
+    }`</span>,
+  <span class="hljs-attr">depthTest</span>: <span class="hljs-literal">false</span>,
+  <span class="hljs-attr">depthWrite</span>: <span class="hljs-literal">false</span>,
+});
+<span class="hljs-keyword">const</span> quad = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PlaneGeometry</span>(<span class="hljs-number">2</span>, <span class="hljs-number">2</span>), effect);
+quad.<span class="hljs-property">frustumCulled</span> = <span class="hljs-literal">false</span>;
+<span class="hljs-keyword">const</span> quadScene = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Scene</span>();
+quadScene.<span class="hljs-title function_">add</span>(quad);
+<span class="hljs-keyword">const</span> quadCamera = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">OrthographicCamera</span>(-<span class="hljs-number">1</span>, <span class="hljs-number">1</span>, <span class="hljs-number">1</span>, -<span class="hljs-number">1</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>);   <span class="hljs-comment">// render() wants a camera</span>
+</code></pre>
+<p>Each frame now has two passes:</p>
+<pre class="hljs"><code class="language-js">renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">t</span>) =&gt;</span> {
+  <span class="hljs-title function_">animate</span>(t / <span class="hljs-number">1000</span>);
+  renderer.<span class="hljs-title function_">setRenderTarget</span>(target);      <span class="hljs-comment">// pass 1: the scene, into the texture</span>
+  renderer.<span class="hljs-title function_">render</span>(scene, camera);
+  renderer.<span class="hljs-title function_">setRenderTarget</span>(<span class="hljs-literal">null</span>);        <span class="hljs-comment">// pass 2: the quad, onto the screen</span>
+  renderer.<span class="hljs-title function_">render</span>(quadScene, quadCamera);
+});
+</code></pre>
+<p>The fragment shader runs once for every pixel of the screen, and <code>vUv</code> tells it where it is. It is the same kind of shader as the gradient planes of Part 4. The only new thing is that it reads its colour from a texture of the rendered scene. Pixelating is one line: round the UV down to a grid of cells before you sample, and every pixel in a cell reads the same texel.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-6/step-1-render-target.webp" alt="Screenshot of step 1: the scene, the chrome knot and neon rings between white pillars, drawn as big square blocks of colour by a pixelate shader. A panel says render target 960 by 600, HalfFloat, 4x MSAA, quad shader pixelate, tone mapping and sRGB on, in the quad shader." width="960" height="600" loading="lazy">
+  <figcaption>Step 1: the scene goes into a render target, then a full-screen quad draws it with a pixelate shader. The panel switches between copy, greyscale, pixelate and invert. (<a href="/3d-tutorial/demos/part-6/step-1.html" target="_blank" rel="noopener">step-1.html</a>)</figcaption>
+</figure>
+<p><strong>Why the two <code>#include</code> lines?</strong> When the renderer draws into a render target, Three.js leaves the values <strong>linear</strong> and does <strong>not</strong> tone map them: the built-in materials only apply tone mapping and the sRGB conversion from Parts 2 and 3 when they draw to the screen. That is deliberate, because the next shader wants the real HDR numbers, not display values. But it means the <em>last</em> shader in the chain has to do both steps, or the picture comes out harsh and wrong. In step 1 that last shader is ours, so it includes Three.js's own chunks, as the Part 4 shaders did. Untick <strong>tone map + sRGB</strong> in the panel to see the raw linear values on screen.</p>
+<p>Remember that rule: <strong>tone mapping and the sRGB conversion happen once, at the very end.</strong> Most post-processing bugs are a break of it.</p>
+<h2>Step 2: EffectComposer and ping-pong</h2>
+<p>One effect is easy. With five, you need more textures: each effect reads the previous picture and writes a new one, and a shader cannot read and write the same texture at once. Three.js's <code>EffectComposer</code> organises this for you. You give it a list of <strong>passes</strong>, and it runs them in order:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">EffectComposer</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/postprocessing/EffectComposer.js&#x27;</span>;
+<span class="hljs-keyword">import</span> { <span class="hljs-title class_">RenderPass</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/postprocessing/RenderPass.js&#x27;</span>;
+<span class="hljs-keyword">import</span> { <span class="hljs-title class_">ShaderPass</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/postprocessing/ShaderPass.js&#x27;</span>;
+<span class="hljs-keyword">import</span> { <span class="hljs-title class_">OutputPass</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/postprocessing/OutputPass.js&#x27;</span>;
+
+<span class="hljs-keyword">const</span> composer = <span class="hljs-keyword">new</span> <span class="hljs-title class_">EffectComposer</span>(renderer);   <span class="hljs-comment">// makes two HalfFloat render targets for us</span>
+composer.<span class="hljs-title function_">addPass</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">RenderPass</span>(scene, camera)); <span class="hljs-comment">// draw the scene</span>
+composer.<span class="hljs-title function_">addPass</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">ShaderPass</span>(<span class="hljs-title class_">LensShader</span>));    <span class="hljs-comment">// our effect (below)</span>
+composer.<span class="hljs-title function_">addPass</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">OutputPass</span>());              <span class="hljs-comment">// tone mapping + sRGB, once, at the end</span>
+
+renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">t</span>) =&gt;</span> {
+  <span class="hljs-title function_">animate</span>(t / <span class="hljs-number">1000</span>);
+  composer.<span class="hljs-title function_">render</span>();   <span class="hljs-comment">// instead of renderer.render(scene, camera)</span>
+});
+</code></pre>
+<p>Inside, the composer owns exactly two render targets, and the passes take turns with them. This is called <strong>ping-pong</strong>: one target is the <code>readBuffer</code>, the latest picture, and the other is the <code>writeBuffer</code>, where the next pass draws. A pass that reads one and writes the other sets <code>needsSwap</code>, and afterwards the composer swaps the two names, so the next pass again finds the newest picture in <code>readBuffer</code>. The last enabled pass gets <code>renderToScreen = true</code> and draws to the canvas instead.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-6/ping-pong.svg" alt="Diagram of EffectComposer ping-pong. Two lanes, rt1 and rt2, and five passes from left to right. RenderPass draws the scene into readBuffer. UnrealBloomPass adds glow on top of readBuffer, reading and writing the same target, so there is no swap. ShaderPass, the lens, reads one target and writes the other, then the targets swap. OutputPass reads and writes, tone mapping and sRGB, then they swap again. FXAAPass, the last pass with renderToScreen, reads and writes to the screen. A footer says two render targets take turns; a pass that reads and writes different textures swaps them afterwards, so the next pass always finds the latest picture in readBuffer." width="1060" height="420" loading="lazy">
+</figure>
+<p>Not every pass swaps. <code>RenderPass</code> draws into the <code>readBuffer</code> directly, and <code>UnrealBloomPass</code>, which we add in step 3, blends its glow on top of the <code>readBuffer</code> and leaves it there. Neither needs a second texture for its output. The panel in step 2 traces the real buffers for the current frame, so you can watch it: turn a pass off and the chain on the left changes.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-6/step-2-composer.webp" alt="Screenshot of step 2: the knot and neon rings with darkened corners and a slight red and blue fringe on the pillars near the edges. A panel lists the passes of this frame: RenderPass reads scene, writes rt2; LensShader reads rt2, writes rt1, then swap; OutputPass reads rt1, writes screen, then swap." width="960" height="600" loading="lazy">
+  <figcaption>Step 2: <code>RenderPass → ShaderPass(LensShader) → OutputPass</code>, with the composer's own record of which buffer each pass read and wrote. (<a href="/3d-tutorial/demos/part-6/step-2.html" target="_blank" rel="noopener">step-2.html</a>)</figcaption>
+</figure>
+<h3>A custom ShaderPass: the lens</h3>
+<p><code>ShaderPass</code> turns any shader into a pass. It is the same full-screen quad as step 1, with one convention: the input picture arrives in a uniform called <strong><code>tDiffuse</code></strong>, and <code>ShaderPass</code> fills it in for you. Everything else is the Part 4 fragment shader you already know how to write. Ours imitates two faults of a cheap camera lens:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> <span class="hljs-title class_">LensShader</span> = {
+  <span class="hljs-attr">name</span>: <span class="hljs-string">&#x27;LensShader&#x27;</span>,
+  <span class="hljs-attr">uniforms</span>: {
+    <span class="hljs-attr">tDiffuse</span>: { <span class="hljs-attr">value</span>: <span class="hljs-literal">null</span> },   <span class="hljs-comment">// set by ShaderPass: the previous pass&#x27;s picture</span>
+    <span class="hljs-attr">aberration</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">0.04</span> },
+    <span class="hljs-attr">vignette</span>: { <span class="hljs-attr">value</span>: <span class="hljs-number">0.8</span> },
+  },
+  <span class="hljs-attr">vertexShader</span>: <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`</span>,
+  <span class="hljs-attr">fragmentShader</span>: <span class="hljs-comment">/* glsl */</span> <span class="hljs-string">`
+    uniform sampler2D tDiffuse;
+    uniform float aberration;
+    uniform float vignette;
+    varying vec2 vUv;
+    void main() {
+      vec2 fromCentre = vUv - 0.5;
+      float dist = length(fromCentre);
+      vec2 offset = fromCentre * dist * aberration;   // zero in the middle, strongest in the corners
+
+      // chromatic aberration: red, green and blue each sampled at a slightly different spot
+      float r = texture2D(tDiffuse, vUv + offset).r;
+      vec4 base = texture2D(tDiffuse, vUv);
+      float b = texture2D(tDiffuse, vUv - offset).b;
+      vec3 color = vec3(r, base.g, b);
+
+      // vignette: darken towards the corners
+      color *= mix(1.0, smoothstep(0.85, 0.25, dist), vignette);
+      gl_FragColor = vec4(color, base.a);
+    }`</span>,
+};
+<span class="hljs-keyword">const</span> lensPass = <span class="hljs-keyword">new</span> <span class="hljs-title class_">ShaderPass</span>(<span class="hljs-title class_">LensShader</span>);
+lensPass.<span class="hljs-property">uniforms</span>.<span class="hljs-property">aberration</span>.<span class="hljs-property">value</span> = <span class="hljs-number">0.06</span>;   <span class="hljs-comment">// ShaderPass clones the uniforms: change them here</span>
+</code></pre>
+<p><strong>Chromatic aberration</strong> is a lens bending red, green and blue light by slightly different amounts, so colours fringe near the edges of the frame. The shader fakes it by reading the red channel a little further out from the centre and the blue a little further in. Because <code>offset</code> grows with the distance from the centre, the middle of the picture stays sharp. The <strong>vignette</strong> is the <code>smoothstep</code> falloff from Part 4's glowing spot, turned inside out: full brightness up to a distance of 0.25 from the centre, fading towards 0.85. <code>mix</code> with the <code>vignette</code> uniform sets how strong it is.</p>
+<p>This is also the first shader that reads the texture at <strong>other</strong> pixels than its own (<code>vUv + offset</code>). That is exactly what a single-pass material cannot do, and why post-processing exists: a mesh's fragment shader only knows about its own pixel, while a full-screen pass sees the finished picture.</p>
+<h3>OutputPass: tone mapping, once, at the end</h3>
+<p><code>OutputPass</code> is the composer's version of the two <code>#include</code> lines from step 1. It applies the renderer's <code>toneMapping</code> and <code>toneMappingExposure</code>, then converts to the output colour space, sRGB. It reads those settings from the renderer, so the tone mapping you set up in Part 3 keeps working. Turn it off in the step 2 panel and you get the raw linear values on screen:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-6/step-2-outputpass.webp" alt="Two halves of the same frame side by side. Left, with OutputPass: soft neon colours, a grey chrome knot, smooth shading. Right, without OutputPass: the rings are flat, oversaturated yellow, cyan and magenta, the shadows are much darker and the knot looks harsh." width="960" height="600" loading="lazy">
+  <figcaption>Left: with <code>OutputPass</code>. Right: without it, the linear HDR values go to the screen as they are. Bright areas clip to pure colours and the darks are too dark.</figcaption>
+</figure>
+<p>In r186 you should always end a composer chain with <code>OutputPass</code>. Older tutorials end with a plain <code>ShaderPass(GammaCorrectionShader)</code> or set <code>renderer.outputEncoding</code>. Neither is right any more: the first ignores tone mapping, and the second no longer exists.</p>
+<h2>Step 3: bloom, and why the order matters</h2>
+<p><strong>Bloom</strong> is the glow around bright light: in a real camera or eye, very bright light scatters and bleeds into the area around it. <code>UnrealBloomPass</code>, named after the Unreal Engine technique it copies, fakes it in four steps:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-6/bloom-pipeline.svg" alt="Diagram of the bloom pipeline. An HDR scene in HalfFloat colour, with neon at 3.0 to 6.0, goes into a bright pass that keeps pixels whose luminance is above the threshold; the rest goes black. The result is blurred at five sizes, from one half to one thirty-second of the screen. The five blurred images are combined as a weighted sum shaped by radius and multiplied by strength: small mips give a wide soft halo, big mips a tight core. The glow is added on top of the scene, still in HDR, and tone mapping and sRGB come last, from OutputPass or renderOutput. UnrealBloomPass in WebGL and the bloom() node in WebGPU both follow these steps." width="990" height="400" loading="lazy">
+</figure>
+<ol>
+<li><strong>Bright pass:</strong> keep only pixels brighter than <code>threshold</code>, and make the rest black.</li>
+<li><strong>Blur</strong> that image at five sizes, each half the resolution of the one before. Blurring a small image and stretching it back up is a cheap way to get a very wide blur.</li>
+<li><strong>Combine</strong> the five blurs. <code>radius</code> shifts the weight from the tight, sharp ones to the wide, soft ones, and <code>strength</code> scales the whole glow.</li>
+<li><strong>Add</strong> the glow on top of the picture.</li>
+</ol>
+<p>In code it is one pass between the scene and the output:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">UnrealBloomPass</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/postprocessing/UnrealBloomPass.js&#x27;</span>;
+
+<span class="hljs-comment">// resolution, strength, radius, threshold</span>
+<span class="hljs-keyword">const</span> bloomPass = <span class="hljs-keyword">new</span> <span class="hljs-title class_">UnrealBloomPass</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector2</span>(innerWidth, innerHeight), <span class="hljs-number">0.5</span>, <span class="hljs-number">0.2</span>, <span class="hljs-number">1</span>);
+
+composer.<span class="hljs-title function_">addPass</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">RenderPass</span>(scene, camera));
+composer.<span class="hljs-title function_">addPass</span>(bloomPass);
+composer.<span class="hljs-title function_">addPass</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">OutputPass</span>());
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-6/step-3-bloom.webp" alt="Screenshot of step 3: the neon rings and sparks now glow, with soft orange, pink and cyan halos spreading over the knot and the dark background. A panel with sliders for strength, radius, threshold, exposure, a tone mapping menu and an order menu." width="960" height="600" loading="lazy">
+  <figcaption>Step 3: <code>RenderPass → UnrealBloomPass → OutputPass</code>. The threshold is 1.0, so only the emissive neon, with values of 3 and 6, makes it through the bright pass. (<a href="/3d-tutorial/demos/part-6/step-3.html" target="_blank" rel="noopener">step-3.html</a>)</figcaption>
+</figure>
+<p>A threshold of <strong>1.0</strong> is the interesting number. In an HDR render target, 1.0 is &quot;white&quot;, and only things that are brighter than white get past it: the neon. The lit white pillars and the chrome highlights stay just under it, so they do not glow. This only works because of the two rules from step 1: the composer's render targets are <strong>HalfFloat</strong>, so values above 1 are still there, and <strong>tone mapping comes after the bloom</strong>, so the bloom sees the real light values, not the 0-to-1 display values.</p>
+<p>Now break the rule. Set <strong>order</strong> to &quot;output → bloom&quot; in the panel:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-6/step-3-order.webp" alt="Two halves of the same frame. Left, bloom before OutputPass: the neon rings glow with warm soft halos on a dark background. Right, OutputPass before bloom: no glow at all, and the whole picture is washed out, the neon rings look pale grey-white and the background is a light grey haze." width="960" height="600" loading="lazy">
+  <figcaption>Left: <code>bloom → OutputPass</code>, the right way. Right: <code>OutputPass → bloom</code>. No glow, and the picture is grey and washed out.</figcaption>
+</figure>
+<p>Two things went wrong at once:</p>
+<ul>
+<li><strong>No glow.</strong> After <code>OutputPass</code>, every pixel is a display value between 0 and 1. The bright pass is looking for values above 1.0, and there are none left. You could lower the threshold until something glows, but then the white pillars glow too, because tone mapping has squashed the neon and the pillars into the same range.</li>
+<li><strong>A washed-out picture.</strong> As the last pass, <code>UnrealBloomPass</code> copies its result to the screen with a material that applies the renderer's tone mapping and sRGB conversion. The picture has now been tone mapped and converted twice. Every dark value is lifted, every colour bleached.</li>
+</ul>
+<p>That is the general lesson, and it applies to almost every effect: <strong>effects that work on light</strong> (bloom, depth of field, motion blur, exposure) <strong>go before <code>OutputPass</code></strong>, on linear HDR values. <strong>Effects that work on the final image</strong> (anti-aliasing, film grain, many colour grades) <strong>go after it</strong>, on display values.</p>
+<p>Try the <strong>tone mapping</strong> menu too. With <code>None (clips)</code>, everything above 1.0 is cut off flat, and the bloom's soft edge suddenly ends in a hard rim. ACES Filmic, AgX and Neutral each roll the highlights off differently, so the same glow changes colour and size between them. That is Part 3's tone mapping, now with a much more demanding input.</p>
+<h2>Step 4: anti-aliasing in a composer</h2>
+<p>Switch to a composer, look at the thin grid lines and the edges of the pillars, and you may notice that they have become jagged. That is not a bug in your passes. <code>antialias: true</code> on the renderer enables MSAA <strong>for the canvas only</strong>, and the composer no longer draws the scene to the canvas: it draws it into its own render targets, which by default have no MSAA. There are three ways to get the smooth edges back:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-comment">// 1. MSAA in the composer&#x27;s render target: hand it one you made</span>
+<span class="hljs-keyword">const</span> size = renderer.<span class="hljs-title function_">getDrawingBufferSize</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector2</span>());
+<span class="hljs-keyword">const</span> target = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGLRenderTarget</span>(size.<span class="hljs-property">x</span>, size.<span class="hljs-property">y</span>, { <span class="hljs-attr">type</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">HalfFloatType</span>, <span class="hljs-attr">samples</span>: <span class="hljs-number">4</span> });
+<span class="hljs-keyword">const</span> composer = <span class="hljs-keyword">new</span> <span class="hljs-title class_">EffectComposer</span>(renderer, target);
+
+<span class="hljs-comment">// 2. FXAA or 3. SMAA: a pass at the end, after OutputPass</span>
+<span class="hljs-keyword">import</span> { <span class="hljs-title class_">FXAAPass</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/postprocessing/FXAAPass.js&#x27;</span>;
+<span class="hljs-keyword">import</span> { <span class="hljs-title class_">SMAAPass</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/postprocessing/SMAAPass.js&#x27;</span>;
+composer.<span class="hljs-title function_">addPass</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">OutputPass</span>());
+composer.<span class="hljs-title function_">addPass</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">FXAAPass</span>());   <span class="hljs-comment">// or new SMAAPass()</span>
+</code></pre>
+<ul>
+<li><strong>MSAA</strong> (multisample anti-aliasing) runs while the scene is drawn: the GPU tests several points inside each pixel on triangle edges and averages them. It gives the best edges on geometry, but costs memory for every sample and does nothing for edges created <em>by</em> a shader.</li>
+<li><strong>FXAA</strong> (fast approximate anti-aliasing) is a post-processing pass. It looks for sharp contrast steps in the finished image and blurs along them. It is cheap and catches every edge, including shader edges, but can soften fine detail and text.</li>
+<li><strong>SMAA</strong> (subpixel morphological anti-aliasing) is a smarter post pass: it recognises edge shapes and blends them more precisely, with three internal passes. Sharper than FXAA, a bit more expensive.</li>
+</ul>
+<figure>
+  <img src="/3d-tutorial/images/part-6/step-4-aa.webp" alt="A two by two grid of the same close-up, magnified four times with square pixels: the edge of a white pillar against thin purple grid lines. No anti-aliasing: hard stair steps on the pillar edge and the lines. MSAA times 4 render target: smooth edges. FXAAPass: smooth but slightly blurred edges. SMAAPass: smooth edges that stay crisp." width="960" height="600" loading="lazy">
+  <figcaption>Step 4, magnified 4×: no anti-aliasing, MSAA in the render target, FXAA and SMAA. Each version is a URL: <code>?aa=none</code>, <code>msaa</code>, <code>fxaa</code> or <code>smaa</code>, plus <code>&amp;zoom</code> for the magnifier. (<a href="/3d-tutorial/demos/part-6/step-4.html?aa=smaa&amp;zoom" target="_blank" rel="noopener">step-4.html</a>)</figcaption>
+</figure>
+<p>FXAA and SMAA have to go <strong>after <code>OutputPass</code></strong>. They decide what an edge is by comparing brightness, and they were designed for display values in sRGB, not for linear HDR values where a neon tube is 6.0 and its neighbour 0.01. Put them earlier and they miss edges in the darks and over-blur the highlights.</p>
+<h2>Step 5: the same chain on WebGPU, with TSL</h2>
+<p>Now the WebGPU version. <code>EffectComposer</code> and its passes are GLSL and do not run on <code>WebGPURenderer</code>, just as <code>ShaderMaterial</code> did not in Part 5. The replacement is the same idea as Part 5's node materials: instead of a list of passes, you build <strong>one node graph</strong> for the whole screen, and the renderer turns it into shaders and render targets.</p>
+<p>The four pieces map one to one:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-6/pass-chain.svg" alt="Diagram comparing the same chain in two APIs. Left, WebGLRenderer and EffectComposer, where composer.addPass adds each pass in order: new RenderPass(scene, camera), new UnrealBloomPass, new ShaderPass(LensShader) in GLSL, new OutputPass, new FXAAPass, then composer.render(). Right, WebGPURenderer and RenderPipeline in TSL, nested function calls with renderPipeline.outputNode set to the last one: pass(scene, camera), color.add(bloom(color, ...)), lens(color) as a TSL function, renderOutput(color), fxaa(color), then renderPipeline.render(). A footer says the steps are the same and in the same order, but the composer runs a fixed list of full-screen draws into its two shared targets, while the node version is one graph: three.js only makes a render target where a node must read neighbouring pixels, such as bloom, lens and FXAA, and folds the rest, such as add() and renderOutput(), into the shader that reads it." width="980" height="530" loading="lazy">
+</figure>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/webgpu&#x27;</span>;
+<span class="hljs-keyword">import</span> { pass, renderOutput } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/tsl&#x27;</span>;
+<span class="hljs-keyword">import</span> { bloom } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/tsl/display/BloomNode.js&#x27;</span>;
+<span class="hljs-keyword">import</span> { fxaa } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/tsl/display/FXAANode.js&#x27;</span>;
+
+<span class="hljs-comment">// RenderPass → pass(): the scene into a HalfFloat render target, as a texture node</span>
+<span class="hljs-keyword">const</span> scenePass = <span class="hljs-title function_">pass</span>(scene, camera);
+<span class="hljs-keyword">const</span> sceneColor = scenePass.<span class="hljs-title function_">getTextureNode</span>(<span class="hljs-string">&#x27;output&#x27;</span>);
+
+<span class="hljs-comment">// UnrealBloomPass → bloom(): strength, radius, threshold</span>
+<span class="hljs-keyword">const</span> bloomPass = <span class="hljs-title function_">bloom</span>(sceneColor, <span class="hljs-number">0.8</span>, <span class="hljs-number">0.4</span>, <span class="hljs-number">0.85</span>);
+
+<span class="hljs-keyword">const</span> renderPipeline = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">RenderPipeline</span>(renderer);   <span class="hljs-comment">// called PostProcessing before r183</span>
+renderPipeline.<span class="hljs-property">outputColorTransform</span> = <span class="hljs-literal">false</span>;   <span class="hljs-comment">// we call renderOutput() ourselves, see below</span>
+
+<span class="hljs-keyword">let</span> color = sceneColor.<span class="hljs-title function_">add</span>(bloomPass);   <span class="hljs-comment">// add the glow on top: still HDR</span>
+color = <span class="hljs-title function_">lens</span>(color);                     <span class="hljs-comment">// our lens effect, below</span>
+color = <span class="hljs-title function_">renderOutput</span>(color);             <span class="hljs-comment">// OutputPass → renderOutput(): tone mapping + sRGB</span>
+color = <span class="hljs-title function_">fxaa</span>(color);                     <span class="hljs-comment">// FXAAPass → fxaa(): after the output transform</span>
+renderPipeline.<span class="hljs-property">outputNode</span> = color;
+
+renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">t</span>) =&gt;</span> {
+  <span class="hljs-title function_">animate</span>(t / <span class="hljs-number">1000</span>);
+  renderPipeline.<span class="hljs-title function_">render</span>();   <span class="hljs-comment">// instead of renderer.render(scene, camera)</span>
+});
+</code></pre>
+<p>Read it from the top, and it is the composer chain, written as maths on images:</p>
+<ul>
+<li><strong><code>pass(scene, camera)</code></strong> renders the scene into its own render target, HalfFloat by default, and with MSAA when the renderer was created with <code>antialias: true</code>. So the jagged-edge problem of step 4 does not happen here. <code>getTextureNode('output')</code> gives you that texture as a node.</li>
+<li><strong><code>bloom(node, strength, radius, threshold)</code></strong> is the same five-level bloom as <code>UnrealBloomPass</code>, as a node. It returns <strong>only the glow</strong>, so you add it to the scene yourself with <code>.add()</code>. That makes the &quot;which picture does it glow on top of&quot; choice yours, which we use in step 6. Its parameters are uniforms: change them with <code>bloomPass.strength.value = 1.2</code>, no rebuild needed.</li>
+<li><strong><code>renderOutput(node)</code></strong> is <code>OutputPass</code>: the renderer's tone mapping and output colour space. You can also pass a tone mapping and colour space to it directly, <code>renderOutput(color, THREE.AgXToneMapping)</code>, which overrides the renderer's.</li>
+<li><strong><code>fxaa(node)</code></strong> and <strong><code>smaa(node)</code></strong> are the anti-aliasing passes. Like their WebGL versions, they want sRGB input.</li>
+</ul>
+<p><strong>What is <code>outputColorTransform</code>?</strong> By default, <code>RenderPipeline</code> applies <code>renderOutput()</code> for you, at the very end of the graph. That is convenient, and step 6 uses it. But it would put tone mapping <em>after</em> FXAA, which is the wrong order. Setting <code>outputColorTransform = false</code> turns the automatic version off, so you can place <code>renderOutput()</code> yourself, with FXAA after it. Forget either half and you get tone mapping twice, or none at all.</p>
+<p>The node graph is built once. When you change its <strong>structure</strong>, for example to switch an effect off, rebuild the chain, assign the new <code>outputNode</code>, and set <code>renderPipeline.needsUpdate = true</code> so it compiles new shaders. Changing a <strong>uniform</strong> needs neither.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-6/step-5-tsl.webp" alt="Screenshot of step 5 on WebGPU: the glowing neon rings and sparks with bloom, darkened corners and colour fringes. The status panel reads: running on WebGPU, RenderPipeline: pass() → add(bloom()) → lens() → renderOutput() → fxaa(). A panel has toggles and sliders for bloom, lens and FXAA." width="960" height="600" loading="lazy">
+  <figcaption>Step 5: the step 3 chain, plus the lens and FXAA, as one TSL graph on <code>WebGPURenderer</code>. This screenshot was taken on WebGPU. (<a href="/3d-tutorial/demos/part-6/step-5.html" target="_blank" rel="noopener">step-5.html</a>)</figcaption>
+</figure>
+<h3>The lens shader, in TSL</h3>
+<p>Here is the <code>LensShader</code> from step 2, ported the same way Part 5 ported the waves. Put the two side by side and they match line for line:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { uniform, uv, vec3, vec4, length, mix, smoothstep, convertToTexture } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/tsl&#x27;</span>;
+
+<span class="hljs-keyword">const</span> aberration = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.04</span>);
+<span class="hljs-keyword">const</span> vignette = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.8</span>);
+
+<span class="hljs-keyword">function</span> <span class="hljs-title function_">lens</span>(<span class="hljs-params">input</span>) {
+  <span class="hljs-keyword">const</span> tex = <span class="hljs-title function_">convertToTexture</span>(input);   <span class="hljs-comment">// a texture we can sample at other pixels</span>
+  <span class="hljs-keyword">const</span> fromCentre = <span class="hljs-title function_">uv</span>().<span class="hljs-title function_">sub</span>(<span class="hljs-number">0.5</span>);
+  <span class="hljs-keyword">const</span> dist = <span class="hljs-title function_">length</span>(fromCentre);
+  <span class="hljs-keyword">const</span> offset = fromCentre.<span class="hljs-title function_">mul</span>(dist).<span class="hljs-title function_">mul</span>(aberration);
+  <span class="hljs-keyword">const</span> r = tex.<span class="hljs-title function_">sample</span>(<span class="hljs-title function_">uv</span>().<span class="hljs-title function_">add</span>(offset)).<span class="hljs-property">r</span>;
+  <span class="hljs-keyword">const</span> base = tex.<span class="hljs-title function_">sample</span>(<span class="hljs-title function_">uv</span>());
+  <span class="hljs-keyword">const</span> b = tex.<span class="hljs-title function_">sample</span>(<span class="hljs-title function_">uv</span>().<span class="hljs-title function_">sub</span>(offset)).<span class="hljs-property">b</span>;
+  <span class="hljs-keyword">const</span> shade = <span class="hljs-title function_">mix</span>(<span class="hljs-number">1</span>, <span class="hljs-title function_">smoothstep</span>(<span class="hljs-number">0.85</span>, <span class="hljs-number">0.25</span>, dist), vignette);
+  <span class="hljs-keyword">return</span> <span class="hljs-title function_">vec4</span>(<span class="hljs-title function_">vec3</span>(r, base.<span class="hljs-property">g</span>, b).<span class="hljs-title function_">mul</span>(shade), base.<span class="hljs-property">a</span>);
+}
+</code></pre>
+<ul>
+<li><strong><code>tDiffuse</code> becomes <code>tex</code></strong>, and <code>texture2D(tDiffuse, uv)</code> becomes <code>tex.sample(uv)</code>.</li>
+<li><strong>The operators become methods</strong>, as always in TSL: <code>fromCentre * dist * aberration</code> is <code>fromCentre.mul(dist).mul(aberration)</code>.</li>
+<li><strong><code>convertToTexture</code> is the one new line.</strong> In the node graph, <code>input</code> is not necessarily a texture: here it is &quot;the scene texture plus the bloom&quot;, an expression. You can compute that for the current pixel for free, but chromatic aberration needs the colour at <strong>other</strong> pixels. <code>convertToTexture</code> makes sure there is a real texture to sample: if the input already is a pass texture it uses it, otherwise it renders the expression into a new render target first. That is the node version of a composer swap, and it only happens where it is needed.</li>
+</ul>
+<p>That last point is the real difference between the two APIs. The composer always does one full-screen draw per pass. The node graph only splits into separate render passes where a node must read neighbouring pixels: the bloom, <code>lens()</code> and FXAA. Cheap per-pixel steps, such as <code>.add()</code>, <code>renderOutput()</code> and the colour grade below, are folded into the shader of the next pass. Fewer full-screen passes means less memory traffic, and on a phone, memory traffic is most of the cost of post-processing.</p>
+<h2>Step 6: selective bloom with MRT</h2>
+<p>Back to the white pillars. With a single threshold, bloom has a dilemma: set it low enough to make the neon glow at a dimmer setting, and the lit pillars and chrome highlights start glowing too. What we really want is &quot;glow only what is emissive&quot;, whatever its brightness. The node version can do that cleanly, with <strong>MRT</strong>, multiple render targets: one scene pass that writes <strong>two</strong> pictures at once.</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { pass, mrt, output, emissive } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/tsl&#x27;</span>;
+
+<span class="hljs-keyword">const</span> scenePass = <span class="hljs-title function_">pass</span>(scene, camera);
+scenePass.<span class="hljs-title function_">setMRT</span>(<span class="hljs-title function_">mrt</span>({ output, emissive }));   <span class="hljs-comment">// two outputs from the same draw calls</span>
+<span class="hljs-keyword">const</span> sceneColor = scenePass.<span class="hljs-title function_">getTextureNode</span>(<span class="hljs-string">&#x27;output&#x27;</span>);      <span class="hljs-comment">// the normal lit picture</span>
+<span class="hljs-keyword">const</span> emissiveColor = scenePass.<span class="hljs-title function_">getTextureNode</span>(<span class="hljs-string">&#x27;emissive&#x27;</span>); <span class="hljs-comment">// only what materials emit</span>
+
+<span class="hljs-keyword">const</span> glow = <span class="hljs-title function_">bloom</span>(emissiveColor, <span class="hljs-number">0.5</span>, <span class="hljs-number">0.4</span>, <span class="hljs-number">0</span>);   <span class="hljs-comment">// no threshold needed: only emitters are in it</span>
+renderPipeline.<span class="hljs-property">outputNode</span> = sceneColor.<span class="hljs-title function_">add</span>(glow);
+</code></pre>
+<p><code>output</code> and <code>emissive</code> are built-in TSL nodes: the final colour of each material, and its emissive term. <code>mrt()</code> tells the scene pass to write both, into two textures of one render target, with no second render of the scene. The bloom now reads the emissive texture, where the pillars and the knot are black, so they can never glow, whatever the threshold.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-6/step-6-selective.webp" alt="Two halves of the same frame. Left, bloom with threshold 0.6 on everything bright: the neon rings glow, but so does the chrome knot, which turns into a soft white blur, and the pillars get a faint haze. Right, bloom on the emissive MRT output only: the rings and sparks glow just as much, while the chrome knot and the pillars stay crisp." width="960" height="600" loading="lazy">
+  <figcaption>Left: bloom on the whole picture with a threshold of 0.6. The chrome highlights bloom too. Right: bloom on the emissive MRT output only. (<a href="/3d-tutorial/demos/part-6/step-6.html" target="_blank" rel="noopener">step-6.html</a>)</figcaption>
+</figure>
+<p>Step 6 does not set <code>outputColorTransform = false</code>, so the pipeline adds <code>renderOutput()</code> at the end for us. With no FXAA after it, that default is exactly right.</p>
+<p>In WebGL this is harder. The common recipe with <code>EffectComposer</code> is two composers: render the scene once with every non-glowing material swapped for black, bloom that, then render it again normally and combine the two. It works, but it costs a second render of the whole scene.</p>
+<h2>The final demo</h2>
+<p>The demo at the top of the article combines everything:</p>
+<ul>
+<li><strong>One scene pass with MRT</strong> (step 6), and a choice between <strong>selective bloom</strong> on the emissive output and plain <strong>threshold bloom</strong> on everything.</li>
+<li><strong>The lens</strong> from step 5.</li>
+<li><strong><code>renderOutput()</code></strong> with a tone mapping menu, passed straight to <code>renderOutput(color, toneMapping)</code>, and an <strong>exposure</strong> slider on the renderer.</li>
+<li><strong>A small colour grade</strong> after <code>renderOutput()</code>, on display values: saturation, contrast around mid-grey, and a warmth control that adds a little red and takes away a little blue. It is a TSL function like <code>lens()</code>, but per-pixel, so it costs no extra pass.</li>
+<li><strong>FXAA or SMAA</strong> at the end.</li>
+<li>A <strong>split</strong> slider. Left of the line, the graph shows <code>renderOutput(sceneColor)</code>, the scene with no effects; right of it, the full chain. Both are in the same graph, and <code>mix(after, before, step(screenUV.x, split))</code> picks one per pixel.</li>
+</ul>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">function</span> <span class="hljs-title function_">grade</span>(<span class="hljs-params">input</span>) {
+  <span class="hljs-keyword">let</span> color = <span class="hljs-title function_">saturation</span>(input.<span class="hljs-property">rgb</span>, sat);
+  color = color.<span class="hljs-title function_">sub</span>(<span class="hljs-number">0.5</span>).<span class="hljs-title function_">mul</span>(contrast).<span class="hljs-title function_">add</span>(<span class="hljs-number">0.5</span>);   <span class="hljs-comment">// contrast around mid-grey</span>
+  color = color.<span class="hljs-title function_">mul</span>(<span class="hljs-title function_">vec3</span>(warmth.<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.12</span>).<span class="hljs-title function_">add</span>(<span class="hljs-number">1</span>), <span class="hljs-number">1</span>, warmth.<span class="hljs-title function_">mul</span>(-<span class="hljs-number">0.12</span>).<span class="hljs-title function_">add</span>(<span class="hljs-number">1</span>)));
+  <span class="hljs-keyword">return</span> <span class="hljs-title function_">vec4</span>(color.<span class="hljs-title function_">clamp</span>(<span class="hljs-number">0</span>, <span class="hljs-number">1</span>), input.<span class="hljs-property">a</span>);
+}
+
+<span class="hljs-keyword">let</span> color = sceneColor.<span class="hljs-title function_">add</span>(selective ? bloomEmissive : bloomAll);
+color = <span class="hljs-title function_">lens</span>(color);
+color = <span class="hljs-title function_">renderOutput</span>(color, toneMapping);
+color = <span class="hljs-title function_">grade</span>(color);
+color = <span class="hljs-title function_">fxaa</span>(color);
+</code></pre>
+<figure>
+  <img src="/3d-tutorial/images/part-6/final.webp" alt="Screenshot of the final demo: the chrome knot inside glowing pink, cyan and orange neon rings, small glowing sparks, white pillars at the sides with colour fringes, dark corners. A lil-gui panel titled Post-processing at the top right, with the Bloom folder open and folders for Lens, Colour grade and Output. The status panel shows the chain: pass() → bloom(emissive) → lens() → renderOutput() → grade() → fxaa()." width="960" height="600" loading="lazy">
+  <figcaption>The final demo on WebGPU, with the full chain.</figcaption>
+</figure>
+<figure>
+  <img src="/3d-tutorial/images/part-6/final-split.webp" alt="The final demo split down the middle by a thin white line. Left half: the plain render, neon rings without glow, flatter colours. Right half: the same frame with bloom, the lens effect and the colour grade." width="960" height="600" loading="lazy">
+  <figcaption>The split slider at 0.5: the raw render on the left, the full chain on the right.</figcaption>
+</figure>
+<figure>
+  <img src="/3d-tutorial/images/part-6/demo.gif" alt="Animation of the final demo: the camera sways gently around the chrome knot and the neon rings while the effects are switched on one by one, with captions: the raw render with no post-processing, bloom where only emissive pixels glow, the lens with chromatic aberration and vignette, a colour grade after renderOutput, and finally a before and after split line sweeping across the picture." width="480" height="300" loading="lazy">
+  <figcaption>The final demo, with the effects faded in one by one. Recorded on the WebGL 2 fallback with a fixed time step: the same TSL graph, compiled to GLSL.</figcaption>
+</figure>
+<p>The same graph runs on both backends: open the demo with <code>?backend=webgl</code>, and the bloom, MRT and lens nodes compile to GLSL instead of WGSL, and the picture stays the same.</p>
+<h2>When it goes wrong: common pitfalls</h2>
+<p><strong>Colour and tone mapping</strong></p>
+<ul>
+<li><strong>The picture is washed out and grey.</strong> Tone mapping or the sRGB conversion ran twice. In a composer, check for two output steps: an <code>OutputPass</code> plus a pass that converts again, such as a final <code>UnrealBloomPass</code> (step 3). In a <code>RenderPipeline</code>, check that you did not call <code>renderOutput()</code> while <code>outputColorTransform</code> is still <code>true</code>.</li>
+<li><strong>The picture is too dark and oversaturated, with harsh highlights.</strong> No tone mapping or sRGB conversion at all: you forgot <code>OutputPass</code>, or set <code>outputColorTransform = false</code> without calling <code>renderOutput()</code>. With a hand-made render target and quad (step 1), your own last shader needs the two <code>#include</code> lines.</li>
+<li><strong>Bloom does nothing, or everything blooms.</strong> Check the order (bloom before the output transform) and the render target type: an 8-bit target clips at 1.0, and then the threshold has nothing to separate. The composer and <code>pass()</code> use HalfFloat by default; a render target you make yourself does not.</li>
+<li><strong>Textures used as post-processing inputs look too bright or too dark.</strong> A colour texture you load and feed into a shader, such as a LUT or a dirt mask, needs <code>texture.colorSpace = THREE.SRGBColorSpace</code>, as in Part 2. Data textures (noise, normals) stay linear.</li>
+</ul>
+<p><strong>Size and pixel ratio</strong></p>
+<ul>
+<li><strong>The effect is blurry, or offset, after resizing the window.</strong> The render targets did not follow the canvas. With a composer, call <code>composer.setSize(width, height)</code> next to <code>renderer.setSize</code>. It resizes both targets and every pass, and uses the renderer's pixel ratio. A render target you made yourself (step 1) must be resized in device pixels: <code>renderer.getDrawingBufferSize(v)</code>, then <code>target.setSize(v.x, v.y)</code>. <code>pass()</code>, <code>bloom()</code> and <code>fxaa()</code> follow the renderer's size by themselves.</li>
+<li><strong>Everything is sharp except after the composer, on a phone or Retina screen.</strong> You called <code>composer.setPixelRatio()</code> with a different value from the renderer, or created your own target in CSS pixels. Keep one pixel ratio, ideally <code>Math.min(devicePixelRatio, 2)</code>, for the canvas and every target.</li>
+<li><strong>Jagged edges as soon as a composer is involved.</strong> The canvas's <code>antialias: true</code> does not apply to the composer's targets. Use a target with <code>samples: 4</code>, or <code>FXAAPass</code>/<code>SMAAPass</code> at the end (step 4).</li>
+<li><strong>FXAA blurs everything or misses edges.</strong> It is not last, or not after the output transform. FXAA and SMAA belong at the very end, on sRGB values.</li>
+</ul>
+<p><strong>Performance</strong></p>
+<ul>
+<li><strong>Every pass is a full-screen draw.</strong> A 2560 × 1440 window at a pixel ratio of 2 is 5120 × 2880 pixels, almost 15 million, for every pass. A bloom alone is a bright pass, ten blur passes on smaller targets and a combine. Cap the pixel ratio (<code>Math.min(devicePixelRatio, 2)</code>, or lower on phones), and switch off the effects you cannot see.</li>
+<li><strong>Merge cheap effects.</strong> Two <code>ShaderPass</code>es that only change each pixel (a grade, a vignette) can be one shader. The TSL graph does that for you; in a composer, you write the combined shader yourself.</li>
+<li><strong>Each composer owns GPU memory.</strong> Two HalfFloat targets at full size, plus everything inside each pass. When you remove a composer, call <code>composer.dispose()</code>, and dispose its passes too: the composer only frees its own render targets and copy pass.</li>
+<li><strong>Do not rebuild the node graph every frame.</strong> Change uniforms with <code>.value</code>. Setting <code>renderPipeline.needsUpdate = true</code> recompiles shaders, which is fine for a menu, not for an animation.</li>
+</ul>
+<p><strong>API changes</strong></p>
+<ul>
+<li><strong><code>RenderPipeline is not a constructor</code>, or a deprecation warning about <code>PostProcessing</code>.</strong> In r183 <code>PostProcessing</code> was renamed <code>RenderPipeline</code>. Before r183 only the old name exists; in r186 the old name still works, with a warning. Older WebGPU examples use it.</li>
+<li><strong><code>ShaderPass</code> or <code>EffectComposer</code> throw on <code>WebGPURenderer</code>.</strong> They are GLSL and WebGL only. On WebGPU, use <code>RenderPipeline</code> and the TSL nodes in <code>three/addons/tsl/display/</code>.</li>
+</ul>
+<h2>The full code</h2>
+<p>Here is the final demo in one file. It loads Three.js from the CDN, so you can save it and open it straight from disk.</p>
+<pre class="hljs"><code class="language-html"><span class="hljs-meta">&lt;!doctype <span class="hljs-keyword">html</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">html</span> <span class="hljs-attr">lang</span>=<span class="hljs-string">&quot;en&quot;</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">head</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">charset</span>=<span class="hljs-string">&quot;utf-8&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">name</span>=<span class="hljs-string">&quot;viewport&quot;</span> <span class="hljs-attr">content</span>=<span class="hljs-string">&quot;width=device-width, initial-scale=1&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">title</span>&gt;</span>Part 6 · Post-processing playground<span class="hljs-tag">&lt;/<span class="hljs-name">title</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">style</span>&gt;</span><span class="language-css">
+    <span class="hljs-selector-tag">html</span>, <span class="hljs-selector-tag">body</span> { <span class="hljs-attribute">margin</span>: <span class="hljs-number">0</span>; <span class="hljs-attribute">height</span>: <span class="hljs-number">100%</span>; <span class="hljs-attribute">background</span>: <span class="hljs-number">#000</span>; <span class="hljs-attribute">overflow</span>: hidden; }
+    <span class="hljs-selector-tag">canvas</span> { <span class="hljs-attribute">display</span>: block; }
+    <span class="hljs-selector-class">.panel</span> { <span class="hljs-attribute">position</span>: absolute; <span class="hljs-attribute">left</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">top</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">max-width</span>: <span class="hljs-built_in">calc</span>(<span class="hljs-number">100%</span> - <span class="hljs-number">48px</span>); <span class="hljs-attribute">font</span>: <span class="hljs-number">400</span> <span class="hljs-number">12px</span>/<span class="hljs-number">1.45</span> ui-monospace, Menlo, Consolas, monospace; <span class="hljs-attribute">color</span>: <span class="hljs-number">#e7eaf0</span>; <span class="hljs-attribute">background</span>: <span class="hljs-built_in">rgba</span>(<span class="hljs-number">18</span>, <span class="hljs-number">21</span>, <span class="hljs-number">29</span>, .<span class="hljs-number">85</span>); <span class="hljs-attribute">border</span>: <span class="hljs-number">1px</span> solid <span class="hljs-number">#3a4258</span>; <span class="hljs-attribute">border-radius</span>: <span class="hljs-number">8px</span>; <span class="hljs-attribute">padding</span>: <span class="hljs-number">8px</span> <span class="hljs-number">11px</span>; <span class="hljs-attribute">white-space</span>: pre; <span class="hljs-attribute">overflow</span>: hidden; }
+    <span class="hljs-selector-class">.hint</span> { <span class="hljs-attribute">position</span>: absolute; <span class="hljs-attribute">left</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">bottom</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">font</span>: <span class="hljs-number">400</span> <span class="hljs-number">12px</span>/<span class="hljs-number">1.45</span> ui-monospace, Menlo, Consolas, monospace; <span class="hljs-attribute">color</span>: <span class="hljs-number">#9aa3b5</span>; <span class="hljs-attribute">pointer-events</span>: none; }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">style</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;importmap&quot;</span>&gt;</span><span class="language-javascript">
+    {
+      <span class="hljs-string">&quot;imports&quot;</span>: {
+        <span class="hljs-string">&quot;three&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js&quot;</span>,
+        <span class="hljs-string">&quot;three/webgpu&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js&quot;</span>,
+        <span class="hljs-string">&quot;three/tsl&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js&quot;</span>,
+        <span class="hljs-string">&quot;three/addons/&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/&quot;</span>
+      }
+    }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">head</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">body</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">div</span> <span class="hljs-attr">id</span>=<span class="hljs-string">&quot;status&quot;</span> <span class="hljs-attr">class</span>=<span class="hljs-string">&quot;panel&quot;</span>&gt;</span>Starting WebGPURenderer…<span class="hljs-tag">&lt;/<span class="hljs-name">div</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">div</span> <span class="hljs-attr">class</span>=<span class="hljs-string">&quot;hint&quot;</span>&gt;</span>Drag to orbit · every effect can be switched off in the panel · drag &quot;split&quot; to compare with the raw render<span class="hljs-tag">&lt;/<span class="hljs-name">div</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;module&quot;</span>&gt;</span><span class="language-javascript">
+    <span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/webgpu&#x27;</span>;
+    <span class="hljs-keyword">import</span> { pass, mrt, output, emissive, renderOutput, uniform, uv, screenUV, vec3, vec4, length, mix, smoothstep, step, abs, saturation, convertToTexture } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/tsl&#x27;</span>;
+    <span class="hljs-keyword">import</span> { bloom } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/tsl/display/BloomNode.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { fxaa } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/tsl/display/FXAANode.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { smaa } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/tsl/display/SMAANode.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">OrbitControls</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/controls/OrbitControls.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">RoomEnvironment</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/environments/RoomEnvironment.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-variable constant_">GUI</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/libs/lil-gui.module.min.js&#x27;</span>;
+
+    <span class="hljs-comment">// WebGPU if the browser has it, WebGL 2 if not. ?backend=webgl forces the fallback.</span>
+    <span class="hljs-keyword">const</span> params = <span class="hljs-keyword">new</span> <span class="hljs-title class_">URLSearchParams</span>(location.<span class="hljs-property">search</span>);
+    <span class="hljs-keyword">const</span> status = <span class="hljs-variable language_">document</span>.<span class="hljs-title function_">getElementById</span>(<span class="hljs-string">&#x27;status&#x27;</span>);
+
+    <span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGPURenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span>, <span class="hljs-attr">forceWebGL</span>: params.<span class="hljs-title function_">get</span>(<span class="hljs-string">&#x27;backend&#x27;</span>) === <span class="hljs-string">&#x27;webgl&#x27;</span> });
+    renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+    renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    renderer.<span class="hljs-property">toneMapping</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">ACESFilmicToneMapping</span>;
+    <span class="hljs-variable language_">document</span>.<span class="hljs-property">body</span>.<span class="hljs-title function_">appendChild</span>(renderer.<span class="hljs-property">domElement</span>);
+
+    <span class="hljs-keyword">try</span> {
+      <span class="hljs-keyword">await</span> renderer.<span class="hljs-title function_">init</span>();   <span class="hljs-comment">// async: asks the browser for a GPU device, or falls back</span>
+    } <span class="hljs-keyword">catch</span> (error) {
+      status.<span class="hljs-property">textContent</span> = <span class="hljs-string">&#x27;Sorry: this browser has neither WebGPU nor WebGL 2.\n&#x27;</span> + error.<span class="hljs-property">message</span>;
+      <span class="hljs-keyword">throw</span> error;
+    }
+    <span class="hljs-keyword">const</span> backendName = renderer.<span class="hljs-property">backend</span>.<span class="hljs-property">isWebGPUBackend</span> ? <span class="hljs-string">&#x27;WebGPU&#x27;</span> : <span class="hljs-string">&#x27;WebGL 2 fallback&#x27;</span>;
+    <span class="hljs-comment">// ---------- The scene: a chrome knot inside three neon rings ----------</span>
+    <span class="hljs-keyword">const</span> scene = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Scene</span>();
+    scene.<span class="hljs-property">background</span> = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-number">0x05060c</span>);
+    scene.<span class="hljs-property">fog</span> = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Fog</span>(<span class="hljs-number">0x05060c</span>, <span class="hljs-number">12</span>, <span class="hljs-number">30</span>);
+    <span class="hljs-keyword">const</span> pmrem = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PMREMGenerator</span>(renderer);
+    scene.<span class="hljs-property">environment</span> = pmrem.<span class="hljs-title function_">fromScene</span>(<span class="hljs-keyword">new</span> <span class="hljs-title class_">RoomEnvironment</span>(), <span class="hljs-number">0.04</span>).<span class="hljs-property">texture</span>;
+    scene.<span class="hljs-property">environmentIntensity</span> = <span class="hljs-number">0.3</span>;
+
+    <span class="hljs-keyword">const</span> camera = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PerspectiveCamera</span>(<span class="hljs-number">45</span>, innerWidth / innerHeight, <span class="hljs-number">0.1</span>, <span class="hljs-number">100</span>);
+    camera.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">2.3</span>, <span class="hljs-number">9.2</span>);
+    <span class="hljs-keyword">const</span> controls = <span class="hljs-keyword">new</span> <span class="hljs-title class_">OrbitControls</span>(camera, renderer.<span class="hljs-property">domElement</span>);
+    controls.<span class="hljs-property">target</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">1.5</span>, <span class="hljs-number">0</span>);
+    controls.<span class="hljs-property">enableDamping</span> = <span class="hljs-literal">true</span>;
+    controls.<span class="hljs-property">maxPolarAngle</span> = <span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> * <span class="hljs-number">0.48</span>;
+    controls.<span class="hljs-title function_">update</span>();
+
+    <span class="hljs-keyword">const</span> floor = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PlaneGeometry</span>(<span class="hljs-number">60</span>, <span class="hljs-number">60</span>), <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0x0a0c14</span>, <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.7</span>, <span class="hljs-attr">metalness</span>: <span class="hljs-number">0.2</span> }));
+    floor.<span class="hljs-property">rotation</span>.<span class="hljs-property">x</span> = -<span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> / <span class="hljs-number">2</span>;
+    scene.<span class="hljs-title function_">add</span>(floor);
+    <span class="hljs-keyword">const</span> grid = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">GridHelper</span>(<span class="hljs-number">60</span>, <span class="hljs-number">60</span>, <span class="hljs-number">0x7a4cff</span>, <span class="hljs-number">0x262d5c</span>);   <span class="hljs-comment">// thin lines: good for spotting aliasing</span>
+    grid.<span class="hljs-property">position</span>.<span class="hljs-property">y</span> = <span class="hljs-number">0.003</span>;
+    scene.<span class="hljs-title function_">add</span>(grid);
+
+    <span class="hljs-keyword">const</span> knot = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">TorusKnotGeometry</span>(<span class="hljs-number">0.75</span>, <span class="hljs-number">0.26</span>, <span class="hljs-number">240</span>, <span class="hljs-number">32</span>), <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0xc9ccd6</span>, <span class="hljs-attr">metalness</span>: <span class="hljs-number">1</span>, <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.22</span> }));
+    knot.<span class="hljs-property">position</span>.<span class="hljs-property">y</span> = <span class="hljs-number">1.5</span>;
+    scene.<span class="hljs-title function_">add</span>(knot);
+
+    <span class="hljs-comment">// Neon: a black base colour and a strong emissive. emissiveIntensity above 1 pushes</span>
+    <span class="hljs-comment">// these pixels well past 1.0, and bright pixels are what bloom looks for.</span>
+    <span class="hljs-keyword">const</span> rings = [<span class="hljs-number">0xff2e88</span>, <span class="hljs-number">0x22e4ff</span>, <span class="hljs-number">0xffa31a</span>].<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">color, i</span>) =&gt;</span> {
+      <span class="hljs-keyword">const</span> ring = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">TorusGeometry</span>(<span class="hljs-number">1.55</span> + i * <span class="hljs-number">0.38</span>, <span class="hljs-number">0.045</span>, <span class="hljs-number">12</span>, <span class="hljs-number">200</span>),
+        <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0x000000</span>, <span class="hljs-attr">emissive</span>: color, <span class="hljs-attr">emissiveIntensity</span>: <span class="hljs-number">3</span> }));
+      ring.<span class="hljs-property">position</span>.<span class="hljs-property">y</span> = <span class="hljs-number">1.5</span>;
+      scene.<span class="hljs-title function_">add</span>(ring);
+      <span class="hljs-keyword">return</span> ring;
+    });
+
+    <span class="hljs-comment">// White pillars: bright only because a light hits them. No emissive.</span>
+    <span class="hljs-keyword">const</span> pillarMaterial = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0xb4b8c4</span>, <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.6</span> });
+    <span class="hljs-keyword">for</span> (<span class="hljs-keyword">let</span> i = <span class="hljs-number">0</span>; i &lt; <span class="hljs-number">6</span>; i++) {
+      <span class="hljs-keyword">const</span> a = (i / <span class="hljs-number">6</span>) * <span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> * <span class="hljs-number">2</span>;   <span class="hljs-comment">// none of them straight in front of the camera</span>
+      <span class="hljs-keyword">const</span> pillar = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BoxGeometry</span>(<span class="hljs-number">0.35</span>, <span class="hljs-number">2.6</span>, <span class="hljs-number">0.35</span>), pillarMaterial);
+      pillar.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">cos</span>(a) * <span class="hljs-number">4.3</span>, <span class="hljs-number">1.3</span>, <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">sin</span>(a) * <span class="hljs-number">4.3</span>);
+      scene.<span class="hljs-title function_">add</span>(pillar);
+    }
+
+    <span class="hljs-keyword">const</span> sparks = [];
+    <span class="hljs-keyword">for</span> (<span class="hljs-keyword">let</span> i = <span class="hljs-number">0</span>; i &lt; <span class="hljs-number">8</span>; i++) {
+      <span class="hljs-keyword">const</span> spark = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">SphereGeometry</span>(<span class="hljs-number">0.07</span>, <span class="hljs-number">16</span>, <span class="hljs-number">12</span>),
+        <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0x000000</span>, <span class="hljs-attr">emissive</span>: i % <span class="hljs-number">2</span> ? <span class="hljs-number">0xffe27a</span> : <span class="hljs-number">0x7af7ff</span>, <span class="hljs-attr">emissiveIntensity</span>: <span class="hljs-number">6</span> }));
+      scene.<span class="hljs-title function_">add</span>(spark);
+      sparks.<span class="hljs-title function_">push</span>(spark);
+    }
+
+    scene.<span class="hljs-title function_">add</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">HemisphereLight</span>(<span class="hljs-number">0x8090ff</span>, <span class="hljs-number">0x100818</span>, <span class="hljs-number">0.4</span>));
+    <span class="hljs-keyword">const</span> sun = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">DirectionalLight</span>(<span class="hljs-number">0xffffff</span>, <span class="hljs-number">1.8</span>);
+    sun.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">3</span>, <span class="hljs-number">6</span>, <span class="hljs-number">4</span>);
+    scene.<span class="hljs-title function_">add</span>(sun);
+
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">animate</span>(<span class="hljs-params">seconds</span>) {
+      knot.<span class="hljs-property">rotation</span>.<span class="hljs-title function_">set</span>(seconds * <span class="hljs-number">0.3</span>, seconds * <span class="hljs-number">0.45</span>, <span class="hljs-number">0</span>);
+      rings.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">ring, i</span>) =&gt;</span> {
+        ring.<span class="hljs-property">rotation</span>.<span class="hljs-property">x</span> = <span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> / <span class="hljs-number">2</span> + <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">sin</span>(seconds * <span class="hljs-number">0.6</span> + i * <span class="hljs-number">2.1</span>) * <span class="hljs-number">0.6</span>;
+        ring.<span class="hljs-property">rotation</span>.<span class="hljs-property">y</span> = seconds * (<span class="hljs-number">0.25</span> + i * <span class="hljs-number">0.12</span>) * (i % <span class="hljs-number">2</span> ? -<span class="hljs-number">1</span> : <span class="hljs-number">1</span>);
+      });
+      sparks.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">spark, i</span>) =&gt;</span> {
+        <span class="hljs-keyword">const</span> a = seconds * <span class="hljs-number">0.7</span> + (i / sparks.<span class="hljs-property">length</span>) * <span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> * <span class="hljs-number">2</span>;
+        spark.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">cos</span>(a) * <span class="hljs-number">3.1</span>, <span class="hljs-number">1.5</span> + <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">sin</span>(a * <span class="hljs-number">2</span> + i) * <span class="hljs-number">0.9</span>, <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">sin</span>(a) * <span class="hljs-number">3.1</span>);
+      });
+    }
+    <span class="hljs-comment">// ---------- end of the scene ----------</span>
+    <span class="hljs-comment">// ---------- 1. One scene pass, two outputs (MRT) ----------</span>
+    <span class="hljs-keyword">const</span> scenePass = <span class="hljs-title function_">pass</span>(scene, camera);
+    scenePass.<span class="hljs-title function_">setMRT</span>(<span class="hljs-title function_">mrt</span>({ output, emissive }));
+    <span class="hljs-keyword">const</span> sceneColor = scenePass.<span class="hljs-title function_">getTextureNode</span>(<span class="hljs-string">&#x27;output&#x27;</span>);
+    <span class="hljs-keyword">const</span> emissiveColor = scenePass.<span class="hljs-title function_">getTextureNode</span>(<span class="hljs-string">&#x27;emissive&#x27;</span>);
+
+    <span class="hljs-comment">// ---------- 2. Bloom: everything bright, or only what glows ----------</span>
+    <span class="hljs-keyword">const</span> bloomAll = <span class="hljs-title function_">bloom</span>(sceneColor, <span class="hljs-number">0.8</span>, <span class="hljs-number">0.4</span>, <span class="hljs-number">0.85</span>);
+    <span class="hljs-keyword">const</span> bloomEmissive = <span class="hljs-title function_">bloom</span>(emissiveColor, <span class="hljs-number">0.8</span>, <span class="hljs-number">0.4</span>, <span class="hljs-number">0</span>);
+
+    <span class="hljs-comment">// ---------- 3. The lens effect from step 5 (Part 4&#x27;s GLSL, as TSL) ----------</span>
+    <span class="hljs-keyword">const</span> aberration = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.03</span>);
+    <span class="hljs-keyword">const</span> vignette = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.7</span>);
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">lens</span>(<span class="hljs-params">input</span>) {
+      <span class="hljs-keyword">const</span> tex = <span class="hljs-title function_">convertToTexture</span>(input);
+      <span class="hljs-keyword">const</span> fromCentre = <span class="hljs-title function_">uv</span>().<span class="hljs-title function_">sub</span>(<span class="hljs-number">0.5</span>);
+      <span class="hljs-keyword">const</span> dist = <span class="hljs-title function_">length</span>(fromCentre);
+      <span class="hljs-keyword">const</span> offset = fromCentre.<span class="hljs-title function_">mul</span>(dist).<span class="hljs-title function_">mul</span>(aberration);
+      <span class="hljs-keyword">const</span> base = tex.<span class="hljs-title function_">sample</span>(<span class="hljs-title function_">uv</span>());
+      <span class="hljs-keyword">const</span> color = <span class="hljs-title function_">vec3</span>(tex.<span class="hljs-title function_">sample</span>(<span class="hljs-title function_">uv</span>().<span class="hljs-title function_">add</span>(offset)).<span class="hljs-property">r</span>, base.<span class="hljs-property">g</span>, tex.<span class="hljs-title function_">sample</span>(<span class="hljs-title function_">uv</span>().<span class="hljs-title function_">sub</span>(offset)).<span class="hljs-property">b</span>);
+      <span class="hljs-keyword">return</span> <span class="hljs-title function_">vec4</span>(color.<span class="hljs-title function_">mul</span>(<span class="hljs-title function_">mix</span>(<span class="hljs-number">1</span>, <span class="hljs-title function_">smoothstep</span>(<span class="hljs-number">0.85</span>, <span class="hljs-number">0.25</span>, dist), vignette)), base.<span class="hljs-property">a</span>);
+    }
+
+    <span class="hljs-comment">// ---------- 4. A small colour grade, on display values after tone mapping ----------</span>
+    <span class="hljs-keyword">const</span> sat = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">1.15</span>);
+    <span class="hljs-keyword">const</span> contrast = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">1.1</span>);
+    <span class="hljs-keyword">const</span> warmth = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0.15</span>);
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">grade</span>(<span class="hljs-params">input</span>) {
+      <span class="hljs-keyword">let</span> color = <span class="hljs-title function_">saturation</span>(input.<span class="hljs-property">rgb</span>, sat);
+      color = color.<span class="hljs-title function_">sub</span>(<span class="hljs-number">0.5</span>).<span class="hljs-title function_">mul</span>(contrast).<span class="hljs-title function_">add</span>(<span class="hljs-number">0.5</span>);                          <span class="hljs-comment">// contrast around mid-grey</span>
+      color = color.<span class="hljs-title function_">mul</span>(<span class="hljs-title function_">vec3</span>(warmth.<span class="hljs-title function_">mul</span>(<span class="hljs-number">0.12</span>).<span class="hljs-title function_">add</span>(<span class="hljs-number">1</span>), <span class="hljs-number">1</span>, warmth.<span class="hljs-title function_">mul</span>(-<span class="hljs-number">0.12</span>).<span class="hljs-title function_">add</span>(<span class="hljs-number">1</span>)));   <span class="hljs-comment">// warmer = more red, less blue</span>
+      <span class="hljs-keyword">return</span> <span class="hljs-title function_">vec4</span>(color.<span class="hljs-title function_">clamp</span>(<span class="hljs-number">0</span>, <span class="hljs-number">1</span>), input.<span class="hljs-property">a</span>);
+    }
+
+    <span class="hljs-comment">// ---------- 5. Put the chain together ----------</span>
+    <span class="hljs-keyword">const</span> split = <span class="hljs-title function_">uniform</span>(<span class="hljs-number">0</span>);   <span class="hljs-comment">// 0 = all &quot;after&quot;; 0.5 = left half shows the raw render</span>
+    <span class="hljs-keyword">const</span> settings = {
+      <span class="hljs-attr">bloom</span>: <span class="hljs-literal">true</span>, <span class="hljs-attr">selective</span>: <span class="hljs-literal">true</span>, <span class="hljs-attr">strength</span>: <span class="hljs-number">0.8</span>, <span class="hljs-attr">radius</span>: <span class="hljs-number">0.4</span>, <span class="hljs-attr">threshold</span>: <span class="hljs-number">0.85</span>,
+      <span class="hljs-attr">lens</span>: <span class="hljs-literal">true</span>,
+      <span class="hljs-attr">grade</span>: <span class="hljs-literal">true</span>, <span class="hljs-attr">exposure</span>: <span class="hljs-number">1</span>,
+      <span class="hljs-attr">toneMapping</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">ACESFilmicToneMapping</span>, <span class="hljs-attr">antialiasing</span>: <span class="hljs-string">&#x27;fxaa&#x27;</span>,
+    };
+    <span class="hljs-keyword">const</span> toneMappings = { <span class="hljs-title class_">ACESFilmic</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">ACESFilmicToneMapping</span>, <span class="hljs-title class_">AgX</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">AgXToneMapping</span>, <span class="hljs-title class_">Neutral</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">NeutralToneMapping</span>, <span class="hljs-string">&#x27;None (clips)&#x27;</span>: <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">NoToneMapping</span> };
+
+    <span class="hljs-keyword">const</span> renderPipeline = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">RenderPipeline</span>(renderer);
+    renderPipeline.<span class="hljs-property">outputColorTransform</span> = <span class="hljs-literal">false</span>;   <span class="hljs-comment">// renderOutput() is called below, by hand</span>
+
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">build</span>(<span class="hljs-params"></span>) {
+      <span class="hljs-keyword">const</span> chain = [<span class="hljs-string">&#x27;pass()&#x27;</span>];
+      <span class="hljs-keyword">let</span> color = sceneColor;
+      <span class="hljs-keyword">if</span> (settings.<span class="hljs-property">bloom</span>) {
+        color = color.<span class="hljs-title function_">add</span>(settings.<span class="hljs-property">selective</span> ? bloomEmissive : bloomAll);
+        chain.<span class="hljs-title function_">push</span>(settings.<span class="hljs-property">selective</span> ? <span class="hljs-string">&#x27;bloom(emissive)&#x27;</span> : <span class="hljs-string">&#x27;bloom(threshold)&#x27;</span>);
+      }
+      <span class="hljs-keyword">if</span> (settings.<span class="hljs-property">lens</span>) { color = <span class="hljs-title function_">lens</span>(color); chain.<span class="hljs-title function_">push</span>(<span class="hljs-string">&#x27;lens()&#x27;</span>); }
+      color = <span class="hljs-title function_">renderOutput</span>(color, settings.<span class="hljs-property">toneMapping</span>);
+      chain.<span class="hljs-title function_">push</span>(<span class="hljs-string">&#x27;renderOutput()&#x27;</span>);
+      <span class="hljs-keyword">if</span> (settings.<span class="hljs-property">grade</span>) { color = <span class="hljs-title function_">grade</span>(color); chain.<span class="hljs-title function_">push</span>(<span class="hljs-string">&#x27;grade()&#x27;</span>); }
+
+      <span class="hljs-comment">// before/after: left of the split line shows the plain render, with no effects</span>
+      <span class="hljs-keyword">const</span> before = <span class="hljs-title function_">renderOutput</span>(sceneColor, settings.<span class="hljs-property">toneMapping</span>);
+      <span class="hljs-keyword">const</span> line = <span class="hljs-title function_">step</span>(<span class="hljs-title function_">abs</span>(screenUV.<span class="hljs-property">x</span>.<span class="hljs-title function_">sub</span>(split)), <span class="hljs-number">0.0012</span>).<span class="hljs-title function_">mul</span>(<span class="hljs-title function_">step</span>(<span class="hljs-number">0.001</span>, split));
+      color = <span class="hljs-title function_">mix</span>(color, before, <span class="hljs-title function_">step</span>(screenUV.<span class="hljs-property">x</span>, split));
+      color = <span class="hljs-title function_">mix</span>(color, <span class="hljs-title function_">vec4</span>(<span class="hljs-number">1</span>), line);
+
+      <span class="hljs-keyword">if</span> (settings.<span class="hljs-property">antialiasing</span> === <span class="hljs-string">&#x27;fxaa&#x27;</span>) { color = <span class="hljs-title function_">fxaa</span>(color); chain.<span class="hljs-title function_">push</span>(<span class="hljs-string">&#x27;fxaa()&#x27;</span>); }
+      <span class="hljs-keyword">if</span> (settings.<span class="hljs-property">antialiasing</span> === <span class="hljs-string">&#x27;smaa&#x27;</span>) { color = <span class="hljs-title function_">smaa</span>(color); chain.<span class="hljs-title function_">push</span>(<span class="hljs-string">&#x27;smaa()&#x27;</span>); }
+
+      renderPipeline.<span class="hljs-property">outputNode</span> = color;
+      renderPipeline.<span class="hljs-property">needsUpdate</span> = <span class="hljs-literal">true</span>;
+      status.<span class="hljs-property">textContent</span> = <span class="hljs-string">`running on: <span class="hljs-subst">${backendName}</span>\n<span class="hljs-subst">${chain.join(<span class="hljs-string">&#x27; → &#x27;</span>)}</span>`</span>;
+    }
+
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">syncBloom</span>(<span class="hljs-params"></span>) {
+      <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> node <span class="hljs-keyword">of</span> [bloomAll, bloomEmissive]) {
+        node.<span class="hljs-property">strength</span>.<span class="hljs-property">value</span> = settings.<span class="hljs-property">strength</span>;
+        node.<span class="hljs-property">radius</span>.<span class="hljs-property">value</span> = settings.<span class="hljs-property">radius</span>;
+      }
+      bloomAll.<span class="hljs-property">threshold</span>.<span class="hljs-property">value</span> = settings.<span class="hljs-property">threshold</span>;
+    }
+
+    <span class="hljs-comment">// ---------- 6. The panel ----------</span>
+    <span class="hljs-keyword">const</span> gui = <span class="hljs-keyword">new</span> <span class="hljs-title function_">GUI</span>({ <span class="hljs-attr">title</span>: <span class="hljs-string">&#x27;Post-processing&#x27;</span> });
+    <span class="hljs-keyword">const</span> fBloom = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Bloom&#x27;</span>);
+    fBloom.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;bloom&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;on&#x27;</span>).<span class="hljs-title function_">onChange</span>(build);
+    fBloom.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;selective&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;emissive only (MRT)&#x27;</span>).<span class="hljs-title function_">onChange</span>(build);
+    fBloom.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;strength&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">3</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">onChange</span>(syncBloom);
+    fBloom.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;radius&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0.01</span>).<span class="hljs-title function_">onChange</span>(syncBloom);
+    fBloom.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;threshold&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">2</span>, <span class="hljs-number">0.01</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;threshold (non-selective)&#x27;</span>).<span class="hljs-title function_">onChange</span>(syncBloom);
+    <span class="hljs-keyword">const</span> fLens = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Lens&#x27;</span>);
+    fLens.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;lens&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;on&#x27;</span>).<span class="hljs-title function_">onChange</span>(build);
+    fLens.<span class="hljs-title function_">add</span>(aberration, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0.15</span>, <span class="hljs-number">0.005</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;aberration&#x27;</span>);
+    fLens.<span class="hljs-title function_">add</span>(vignette, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;vignette&#x27;</span>);
+    <span class="hljs-keyword">const</span> fGrade = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Colour grade&#x27;</span>);
+    fGrade.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;grade&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;on&#x27;</span>).<span class="hljs-title function_">onChange</span>(build);
+    fGrade.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;exposure&#x27;</span>, <span class="hljs-number">0.2</span>, <span class="hljs-number">2.5</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> { renderer.<span class="hljs-property">toneMappingExposure</span> = v; });
+    fGrade.<span class="hljs-title function_">add</span>(sat, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">2</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;saturation&#x27;</span>);
+    fGrade.<span class="hljs-title function_">add</span>(contrast, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0.5</span>, <span class="hljs-number">1.8</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;contrast&#x27;</span>);
+    fGrade.<span class="hljs-title function_">add</span>(warmth, <span class="hljs-string">&#x27;value&#x27;</span>, -<span class="hljs-number">1</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0.05</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;warmth&#x27;</span>);
+    <span class="hljs-keyword">const</span> fOut = gui.<span class="hljs-title function_">addFolder</span>(<span class="hljs-string">&#x27;Output&#x27;</span>);
+    fOut.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;toneMapping&#x27;</span>, toneMappings).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;tone mapping&#x27;</span>).<span class="hljs-title function_">onChange</span>(build);
+    fOut.<span class="hljs-title function_">add</span>(settings, <span class="hljs-string">&#x27;antialiasing&#x27;</span>, { <span class="hljs-attr">none</span>: <span class="hljs-string">&#x27;none&#x27;</span>, <span class="hljs-attr">FXAA</span>: <span class="hljs-string">&#x27;fxaa&#x27;</span>, <span class="hljs-attr">SMAA</span>: <span class="hljs-string">&#x27;smaa&#x27;</span> }).<span class="hljs-title function_">onChange</span>(build);
+    fOut.<span class="hljs-title function_">add</span>(split, <span class="hljs-string">&#x27;value&#x27;</span>, <span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0.01</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;split (before | after)&#x27;</span>);
+    <span class="hljs-keyword">if</span> (innerWidth &lt; <span class="hljs-number">700</span>) gui.<span class="hljs-title function_">close</span>();
+
+    <span class="hljs-title function_">syncBloom</span>();
+    <span class="hljs-title function_">build</span>();
+
+    <span class="hljs-comment">// used by the screenshots and the GIF in the article</span>
+    <span class="hljs-keyword">const</span> api = { settings, split, build, syncBloom, aberration, vignette };
+
+    <span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;resize&#x27;</span>, <span class="hljs-function">() =&gt;</span> {
+      camera.<span class="hljs-property">aspect</span> = innerWidth / innerHeight;
+      camera.<span class="hljs-title function_">updateProjectionMatrix</span>();
+      renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);   <span class="hljs-comment">// pass(), bloom() and fxaa() follow the renderer size</span>
+    });
+
+    renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">t</span>) =&gt;</span> {
+      controls.<span class="hljs-title function_">update</span>();
+      <span class="hljs-title function_">animate</span>(t / <span class="hljs-number">1000</span>);
+      renderPipeline.<span class="hljs-title function_">render</span>();
+    });
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">body</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">html</span>&gt;</span>
+</code></pre>
+<p>The step-by-step versions are in the repo too: <a href="/3d-tutorial/demos/part-6/step-1.html">step-1.html</a> (a render target and a full-screen quad), <a href="/3d-tutorial/demos/part-6/step-2.html">step-2.html</a> (<code>EffectComposer</code>, ping-pong, the lens <code>ShaderPass</code> and <code>OutputPass</code>), <a href="/3d-tutorial/demos/part-6/step-3.html">step-3.html</a> (<code>UnrealBloomPass</code>, tone mapping and pass order), <a href="/3d-tutorial/demos/part-6/step-4.html">step-4.html</a> (MSAA, FXAA and SMAA), <a href="/3d-tutorial/demos/part-6/step-5.html">step-5.html</a> (the same chain as a TSL <code>RenderPipeline</code>) and <a href="/3d-tutorial/demos/part-6/step-6.html">step-6.html</a> (selective bloom with MRT).</p>
+<h2>A few things to try</h2>
+<ul>
+<li>In step 1, add a fifth mode to the quad shader: scanlines, <code>color.rgb *= 0.8 + 0.2 * sin(vUv.y * 800.0)</code>. Then make 800.0 a uniform tied to the canvas height, so the lines stay one pixel apart when you resize.</li>
+<li>In step 2, add a second <code>ShaderPass</code> with three.js's own <code>RGBShiftShader</code> or <code>DotScreenShader</code> from <code>three/addons/shaders/</code>, before and after the lens, and watch the buffer trace change.</li>
+<li>In step 3, set the threshold to 0 and the strength to 0.3. Everything glows a little: that is the dreamy &quot;soft focus&quot; look of many music videos.</li>
+<li>In step 4, compare the frame rate of MSAA and SMAA at full screen with your browser's performance tools.</li>
+<li>In step 5, make the vignette pulse: <code>smoothstep(0.85, 0.25, dist.mul(sin(time.mul(2)).mul(0.05).add(1)))</code>, with <code>time</code> from <code>three/tsl</code>.</li>
+<li>In step 6, give the white pillars an emissive colour, <code>emissive: 0x334455</code>, and see them join the glow.</li>
+<li>In the final demo, add film grain after <code>grade()</code>: <code>vec4(color.rgb.add(rand(screenUV.add(fract(time))).sub(0.5).mul(0.05)), color.a)</code>, with <code>rand</code>, <code>fract</code> and <code>time</code> from <code>three/tsl</code>.</li>
+<li>Look in <code>three/addons/tsl/display/</code> for more nodes ready to plug into the chain: <code>DepthOfFieldNode</code>, <code>GTAONode</code> (ambient occlusion), <code>FilmNode</code>, <code>OutlineNode</code>, a ready-made <code>ChromaticAberrationNode</code> to compare with our lens, and more.</li>
+</ul>
+<h2>Next time</h2>
+<p>We can now change the whole picture after it is drawn: render targets, chains of passes, bloom, a custom lens and anti-aliasing, on both renderers. Each of those effects costs real GPU time, and so does every object in the scene. In Part 7 we will look at <strong>performance</strong>: what a draw call is and why the count matters, drawing thousands of objects at once with <code>InstancedMesh</code> and <code>BatchedMesh</code>, levels of detail with <code>LOD</code>, and how to measure where a frame's time actually goes before you start optimising. See you there.</p>
+</div>
+  <nav class="pager"><a href="/3d-tutorial/part-5-webgpu-tsl/">← Part 5: WebGPU and TSL</a><span class="soon-next">Next: Part 7, Performance (coming soon)</span></nav>
+  <aside class="support" aria-label="Support the series">
+  <p>This series is free. If it helped you, you can support it with a coffee.</p>
+  <div class="support-links"><a class="support-img" href="https://www.buymeacoffee.com/iodiot" target="_blank" rel="noopener" title="Buy Me a Coffee"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height:50px;width:181px" loading="lazy"></a></div>
+</aside>
+</article>
+</main>
+<footer class="foot"><p>© Mike Smahin · <a href="https://github.com/iodiot/3d-tutorial" target="_blank" rel="noopener">source on GitHub</a></p></footer>
+<script data-goatcounter="https://iodiot.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 420" width="1060" height="420" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs><marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9aa3b5"/></marker><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#7cf5d4"/></marker><marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff6fae"/></marker><marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6fd8ff"/></marker><marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffb35c"/></marker></defs>
+  <rect width="1060" height="420" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">EFFECTCOMPOSER: PING-PONG BETWEEN TWO RENDER TARGETS</text>
+  <rect x="32" y="104" width="996" height="34" rx="8" fill="#16302b"/>
+  <text x="44" y="126" fill="#7cf5d4" font-size="13" font-weight="700" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">rt1</text>
+  <rect x="32" y="296" width="996" height="34" rx="8" fill="#2c1a2b"/>
+  <text x="44" y="318" fill="#ff6fae" font-size="13" font-weight="700" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">rt2</text>
+  <rect x="90" y="180" width="144" height="76" rx="12" fill="#1b2030" stroke="#6fd8ff" stroke-width="2" />
+  <text x="162" y="202" fill="#6fd8ff" font-size="13" font-weight="700" text-anchor="middle">RenderPass</text>
+  <text x="162" y="222" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="middle">draws the scene</text>
+  <text x="162" y="237" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="middle">into readBuffer</text>
+  <text x="130" y="166" fill="#6fd8ff" font-size="11" font-weight="400" text-anchor="middle">scene</text>
+  <line x1="130" y1="172" x2="130" y2="178" stroke="#6fd8ff" stroke-width="2" marker-end="url(#c)"/>
+  <line x1="194" y1="258" x2="194" y2="292" stroke="#ff6fae" stroke-width="2" marker-end="url(#p)"/>
+  <text x="200" y="278" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="start">write</text>
+  <rect x="281.5" y="180" width="144" height="76" rx="12" fill="#1b2030" stroke="#ffb35c" stroke-width="2" />
+  <text x="353.5" y="202" fill="#ffb35c" font-size="13" font-weight="700" text-anchor="middle">UnrealBloomPass</text>
+  <text x="353.5" y="222" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="middle">adds glow on top</text>
+  <text x="353.5" y="237" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="middle">of readBuffer</text>
+  <line x1="321.5" y1="294" x2="321.5" y2="258" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <text x="315.5" y="278" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="end">read</text>
+  <line x1="385.5" y1="258" x2="385.5" y2="292" stroke="#ff6fae" stroke-width="2" marker-end="url(#p)"/>
+  <text x="391.5" y="278" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="start">write</text>
+  <rect x="473" y="180" width="144" height="76" rx="12" fill="#1b2030" stroke="#a98bff" stroke-width="2" />
+  <text x="545" y="202" fill="#a98bff" font-size="13" font-weight="700" text-anchor="middle">ShaderPass (lens)</text>
+  <text x="545" y="222" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="middle">reads one,</text>
+  <text x="545" y="237" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="middle">writes the other</text>
+  <line x1="513" y1="294" x2="513" y2="258" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <text x="507" y="278" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="end">read</text>
+  <line x1="577" y1="178" x2="577" y2="142" stroke="#7cf5d4" stroke-width="2" marker-end="url(#m)"/>
+  <text x="583" y="166" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="start">write</text>
+  <text x="640.75" y="222" fill="#ffb35c" font-size="11" font-weight="700" text-anchor="middle">⇄ swap</text>
+  <rect x="664.5" y="180" width="144" height="76" rx="12" fill="#1b2030" stroke="#7cf5d4" stroke-width="2" />
+  <text x="736.5" y="202" fill="#7cf5d4" font-size="13" font-weight="700" text-anchor="middle">OutputPass</text>
+  <text x="736.5" y="222" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="middle">tone map + sRGB</text>
+  <line x1="704.5" y1="140" x2="704.5" y2="178" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <text x="698.5" y="166" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="end">read</text>
+  <line x1="768.5" y1="258" x2="768.5" y2="292" stroke="#ff6fae" stroke-width="2" marker-end="url(#p)"/>
+  <text x="774.5" y="278" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="start">write</text>
+  <text x="832.25" y="222" fill="#ffb35c" font-size="11" font-weight="700" text-anchor="middle">⇄ swap</text>
+  <rect x="856" y="180" width="144" height="76" rx="12" fill="#1b2030" stroke="#ff6fae" stroke-width="2" />
+  <text x="928" y="202" fill="#ff6fae" font-size="13" font-weight="700" text-anchor="middle">FXAAPass</text>
+  <text x="928" y="222" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="middle">last pass:</text>
+  <text x="928" y="237" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="middle">renderToScreen</text>
+  <line x1="896" y1="294" x2="896" y2="258" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <text x="890" y="278" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="end">read</text>
+  <line x1="1002" y1="218" x2="1018" y2="218" stroke="#ff6fae" stroke-width="2" marker-end="url(#p)"/>
+  <rect x="1020" y="168" width="22" height="100" rx="5" fill="#0b0d13" stroke="#6b7386"/>
+  <text x="1035" y="218" fill="#e7eaf0" font-size="11" text-anchor="middle" transform="rotate(-90 1035 218)">screen</text>
+  <text x="32" y="372" fill="#9aa3b5" font-size="12.5" font-weight="400" text-anchor="start">Two render targets take turns. A pass that reads and writes different textures (needsSwap) swaps them afterwards,</text>
+  <text x="32" y="392" fill="#9aa3b5" font-size="12.5" font-weight="400" text-anchor="start">so the next pass always finds the latest picture in readBuffer. You never read and write the same texture at once.</text>
+
+</svg>

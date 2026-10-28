@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 530" width="980" height="530" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs><marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9aa3b5"/></marker><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#7cf5d4"/></marker><marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff6fae"/></marker><marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6fd8ff"/></marker><marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffb35c"/></marker></defs>
+  <rect width="980" height="530" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">THE SAME CHAIN, TWO WAYS</text>
+  <text x="40" y="84" fill="#e7eaf0" font-size="15" font-weight="700" text-anchor="start">WebGLRenderer + EffectComposer</text>
+  <text x="40" y="104" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">composer.addPass(…) in order; each pass is a full-screen draw</text>
+  <text x="520" y="84" fill="#e7eaf0" font-size="15" font-weight="700" text-anchor="start">WebGPURenderer + RenderPipeline (TSL)</text>
+  <text x="520" y="104" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">nested function calls; renderPipeline.outputNode = the last one</text>
+  <rect x="40" y="124" width="400" height="42" rx="12" fill="#1b2030" stroke="#6fd8ff" stroke-width="2" />
+  <text x="58" y="150" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">new RenderPass(scene, camera)</text>
+  <rect x="520" y="124" width="420" height="42" rx="12" fill="#1b2030" stroke="#6fd8ff" stroke-width="2" />
+  <text x="538" y="150" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">pass(scene, camera)</text>
+  <line x1="444" y1="145" x2="516" y2="145" stroke="#6b7386" stroke-width="2" marker-end="url(#g)" stroke-dasharray="4 4"/>
+  <line x1="240" y1="168" x2="240" y2="180" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <line x1="730" y1="168" x2="730" y2="180" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <rect x="40" y="182" width="400" height="42" rx="12" fill="#1b2030" stroke="#ffb35c" stroke-width="2" />
+  <text x="58" y="208" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">new UnrealBloomPass(size, .8, .4, .85)</text>
+  <rect x="520" y="182" width="420" height="42" rx="12" fill="#1b2030" stroke="#ffb35c" stroke-width="2" />
+  <text x="538" y="208" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">color.add(bloom(color, .8, .4, .85))</text>
+  <line x1="444" y1="203" x2="516" y2="203" stroke="#6b7386" stroke-width="2" marker-end="url(#g)" stroke-dasharray="4 4"/>
+  <line x1="240" y1="226" x2="240" y2="238" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <line x1="730" y1="226" x2="730" y2="238" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <rect x="40" y="240" width="400" height="42" rx="12" fill="#1b2030" stroke="#a98bff" stroke-width="2" />
+  <text x="58" y="266" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">new ShaderPass(LensShader)  // GLSL</text>
+  <rect x="520" y="240" width="420" height="42" rx="12" fill="#1b2030" stroke="#a98bff" stroke-width="2" />
+  <text x="538" y="266" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">lens(color)  // a TSL function</text>
+  <line x1="444" y1="261" x2="516" y2="261" stroke="#6b7386" stroke-width="2" marker-end="url(#g)" stroke-dasharray="4 4"/>
+  <line x1="240" y1="284" x2="240" y2="296" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <line x1="730" y1="284" x2="730" y2="296" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <rect x="40" y="298" width="400" height="42" rx="12" fill="#1b2030" stroke="#7cf5d4" stroke-width="2" />
+  <text x="58" y="324" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">new OutputPass()</text>
+  <rect x="520" y="298" width="420" height="42" rx="12" fill="#1b2030" stroke="#7cf5d4" stroke-width="2" />
+  <text x="538" y="324" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">renderOutput(color)</text>
+  <line x1="444" y1="319" x2="516" y2="319" stroke="#6b7386" stroke-width="2" marker-end="url(#g)" stroke-dasharray="4 4"/>
+  <line x1="240" y1="342" x2="240" y2="354" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <line x1="730" y1="342" x2="730" y2="354" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <rect x="40" y="356" width="400" height="42" rx="12" fill="#1b2030" stroke="#ff6fae" stroke-width="2" />
+  <text x="58" y="382" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">new FXAAPass()</text>
+  <rect x="520" y="356" width="420" height="42" rx="12" fill="#1b2030" stroke="#ff6fae" stroke-width="2" />
+  <text x="538" y="382" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">fxaa(color)</text>
+  <line x1="444" y1="377" x2="516" y2="377" stroke="#6b7386" stroke-width="2" marker-end="url(#g)" stroke-dasharray="4 4"/>
+  <text x="40" y="432" fill="#7cf5d4" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">composer.render()</text>
+  <text x="520" y="432" fill="#7cf5d4" font-size="12" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">renderPipeline.render()</text>
+  <text x="40" y="464" fill="#9aa3b5" font-size="12.5" font-weight="400" text-anchor="start">Same steps, same order. The composer runs a fixed list of passes, each a full-screen draw into one of its two shared targets. The node version</text>
+  <text x="40" y="483" fill="#9aa3b5" font-size="12.5" font-weight="400" text-anchor="start">is one graph: three.js only makes a render target where a node must read neighbouring pixels (bloom, lens, FXAA)</text>
+  <text x="40" y="502" fill="#9aa3b5" font-size="12.5" font-weight="400" text-anchor="start">and folds the rest, such as add() and renderOutput(), into the shader that reads it.</text>
+
+</svg>

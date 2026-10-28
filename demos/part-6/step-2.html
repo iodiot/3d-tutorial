@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Part 6 · Step 2 · EffectComposer and a custom ShaderPass</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+    .hint { position: absolute; left: 12px; bottom: 12px; font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; pointer-events: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel">Starting…</div>
+  <div class="hint">Drag to orbit · turn passes off in the panel and watch the chain on the left change</div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+    import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const status = document.getElementById('status');
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;   // applied by OutputPass (or by us, in step 1)
+    document.body.appendChild(renderer.domElement);
+    // ---------- The scene: a chrome knot inside three neon rings ----------
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x05060c);
+    scene.fog = new THREE.Fog(0x05060c, 12, 30);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.3;
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(0, 2.3, 9.2);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1.5, 0);
+    controls.enableDamping = true;
+    controls.maxPolarAngle = Math.PI * 0.48;
+    controls.update();
+
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x0a0c14, roughness: 0.7, metalness: 0.2 }));
+    floor.rotation.x = -Math.PI / 2;
+    scene.add(floor);
+    const grid = new THREE.GridHelper(60, 60, 0x7a4cff, 0x262d5c);   // thin lines: good for spotting aliasing
+    grid.position.y = 0.003;
+    scene.add(grid);
+
+    const knot = new THREE.Mesh(new THREE.TorusKnotGeometry(0.75, 0.26, 240, 32), new THREE.MeshStandardMaterial({ color: 0xc9ccd6, metalness: 1, roughness: 0.22 }));
+    knot.position.y = 1.5;
+    scene.add(knot);
+
+    // Neon: a black base colour and a strong emissive. emissiveIntensity above 1 pushes
+    // these pixels well past 1.0, and bright pixels are what bloom looks for.
+    const rings = [0xff2e88, 0x22e4ff, 0xffa31a].map((color, i) => {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(1.55 + i * 0.38, 0.045, 12, 200),
+        new THREE.MeshStandardMaterial({ color: 0x000000, emissive: color, emissiveIntensity: 3 }));
+      ring.position.y = 1.5;
+      scene.add(ring);
+      return ring;
+    });
+
+    // White pillars: bright only because a light hits them. No emissive.
+    const pillarMaterial = new THREE.MeshStandardMaterial({ color: 0xb4b8c4, roughness: 0.6 });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;   // none of them straight in front of the camera
+      const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.35, 2.6, 0.35), pillarMaterial);
+      pillar.position.set(Math.cos(a) * 4.3, 1.3, Math.sin(a) * 4.3);
+      scene.add(pillar);
+    }
+
+    const sparks = [];
+    for (let i = 0; i < 8; i++) {
+      const spark = new THREE.Mesh(new THREE.SphereGeometry(0.07, 16, 12),
+        new THREE.MeshStandardMaterial({ color: 0x000000, emissive: i % 2 ? 0xffe27a : 0x7af7ff, emissiveIntensity: 6 }));
+      scene.add(spark);
+      sparks.push(spark);
+    }
+
+    scene.add(new THREE.HemisphereLight(0x8090ff, 0x100818, 0.4));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+    sun.position.set(3, 6, 4);
+    scene.add(sun);
+
+    function animate(seconds) {
+      knot.rotation.set(seconds * 0.3, seconds * 0.45, 0);
+      rings.forEach((ring, i) => {
+        ring.rotation.x = Math.PI / 2 + Math.sin(seconds * 0.6 + i * 2.1) * 0.6;
+        ring.rotation.y = seconds * (0.25 + i * 0.12) * (i % 2 ? -1 : 1);
+      });
+      sparks.forEach((spark, i) => {
+        const a = seconds * 0.7 + (i / sparks.length) * Math.PI * 2;
+        spark.position.set(Math.cos(a) * 3.1, 1.5 + Math.sin(a * 2 + i) * 0.9, Math.sin(a) * 3.1);
+      });
+    }
+    // ---------- end of the scene ----------
+    // A post-processing shader is a Part 4 fragment shader with one special uniform:
+    // tDiffuse, the picture the previous pass produced. ShaderPass fills it in for us.
+    const LensShader = {
+      name: 'LensShader',
+      uniforms: {
+        tDiffuse: { value: null },
+        aberration: { value: 0.04 },
+        vignette: { value: 0.8 },
+      },
+      vertexShader: /* glsl */ `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform sampler2D tDiffuse;
+        uniform float aberration;
+        uniform float vignette;
+        varying vec2 vUv;
+        void main() {
+          vec2 fromCentre = vUv - 0.5;
+          float dist = length(fromCentre);
+          vec2 offset = fromCentre * dist * aberration;   // zero in the middle, strongest in the corners
+
+          // chromatic aberration: red, green and blue each sampled at a slightly different spot
+          float r = texture2D(tDiffuse, vUv + offset).r;
+          vec4 base = texture2D(tDiffuse, vUv);
+          float b = texture2D(tDiffuse, vUv - offset).b;
+          vec3 color = vec3(r, base.g, b);
+
+          // vignette: darken towards the corners
+          color *= mix(1.0, smoothstep(0.85, 0.25, dist), vignette);
+          gl_FragColor = vec4(color, base.a);
+        }`,
+    };
+
+    const composer = new EffectComposer(renderer);   // makes two HalfFloat render targets for us
+    const renderPass = new RenderPass(scene, camera);
+    const lensPass = new ShaderPass(LensShader);
+    const outputPass = new OutputPass();             // tone mapping + sRGB, once, at the end
+    composer.addPass(renderPass);
+    composer.addPass(lensPass);
+    composer.addPass(outputPass);
+
+    const gui = new GUI({ title: 'Step 2' });
+    gui.add(lensPass, 'enabled').name('LensShader pass');
+    gui.add(lensPass.uniforms.aberration, 'value', 0, 0.15, 0.005).name('aberration');
+    gui.add(lensPass.uniforms.vignette, 'value', 0, 1, 0.05).name('vignette');
+    gui.add(outputPass, 'enabled').name('OutputPass');
+    if (innerWidth < 700) gui.close();
+
+    // Only for the panel: record which buffer each pass reads and writes, every frame.
+    const bufferName = (rt) => (rt === composer.renderTarget1 ? 'rt1' : 'rt2');
+    let trace = [];
+    for (const pass of composer.passes) {
+      const render = pass.render.bind(pass);
+      const name = pass === renderPass ? 'RenderPass ' : pass === lensPass ? 'LensShader ' : 'OutputPass ';
+      pass.render = (r, writeBuffer, readBuffer, ...rest) => {
+        const input = pass === renderPass ? 'scene' : bufferName(readBuffer);
+        const output = pass.renderToScreen ? 'screen' : bufferName(pass === renderPass ? readBuffer : writeBuffer);
+        trace.push(`${name} reads ${input.padEnd(5)} → writes ${output.padEnd(6)}${pass.needsSwap ? ' · then swap' : ''}`);
+        render(r, writeBuffer, readBuffer, ...rest);
+      };
+    }
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+      composer.setSize(innerWidth, innerHeight);   // resizes both render targets and every pass
+    });
+
+    renderer.setAnimationLoop((t) => {
+      controls.update();
+      animate(t / 1000);
+      trace = [];
+      composer.render();   // instead of renderer.render(scene, camera)
+      status.textContent = 'EffectComposer, this frame:\n' + trace.join('\n')
+        + (outputPass.enabled ? '' : '\n(no OutputPass: linear values go straight to the screen)');
+    });
+  </script>
+</body>
+</html>

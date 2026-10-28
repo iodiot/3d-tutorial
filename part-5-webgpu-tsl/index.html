@@ -737,9 +737,9 @@ scene.<span class="hljs-title function_">add</span>(particles);
 <li>Print the shader of any material you have built so far: <code>console.log((await renderer.debug.getShaderAsync(scene, camera, mesh)).fragmentShader)</code>.</li>
 </ul>
 <h2>Next time</h2>
-<p>We can now render with WebGPU, write materials as node graphs and move tens of thousands of particles on the GPU. Next, in Part 6, we will look at <strong>post-processing</strong>: rendering the scene to a texture first and then running effects over the whole image, such as bloom and colour grading, using the same TSL nodes. The glow of this part's orb is an obvious place to start. See you there.</p>
+<p>We can now render with WebGPU, write materials as node graphs and move tens of thousands of particles on the GPU. In <a href="/3d-tutorial/part-6-post-processing/">Part 6</a> we look at <strong>post-processing</strong>: rendering the scene to a texture first and then running effects over the whole image. We build bloom, a lens effect and anti-aliasing with <code>EffectComposer</code> first, then rebuild the same chain with TSL nodes, including a bloom that only picks up what glows. <a href="/3d-tutorial/part-6-post-processing/">See you there.</a></p>
 </div>
-  <nav class="pager"><a href="/3d-tutorial/part-4-shaders/">← Part 4: Your First Shaders</a><span class="soon-next">Next: Part 6, Post-processing (coming soon)</span></nav>
+  <nav class="pager"><a href="/3d-tutorial/part-4-shaders/">← Part 4: Your First Shaders</a><a href="/3d-tutorial/part-6-post-processing/">Part 6: Post-Processing and Bloom →</a></nav>
   <aside class="support" aria-label="Support the series">
   <p>This series is free. If it helped you, you can support it with a coffee.</p>
   <div class="support-links"><a class="support-img" href="https://www.buymeacoffee.com/iodiot" target="_blank" rel="noopener" title="Buy Me a Coffee"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height:50px;width:181px" loading="lazy"></a></div>
