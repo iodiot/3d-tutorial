@@ -29,6 +29,8 @@ Roughly, the plan is:
 3. [Models, light and shadows](/3d-tutorial/part-3-models-shadows-environment/): real models, animation, HDR light and shadows.
 4. [Your first shaders](/3d-tutorial/part-4-shaders/): `ShaderMaterial`, GLSL basics, and what the GPU is actually doing.
 5. [WebGPU and TSL](/3d-tutorial/part-5-webgpu-tsl/): Three.js's `WebGPURenderer`, the TSL shading language and compute shaders.
+6. [Post-processing and bloom](/3d-tutorial/part-6-post-processing/): render targets, `EffectComposer`, bloom and anti-aliasing, and the same chain with TSL nodes.
+7. **Performance** (next): draw calls, instancing and batching, levels of detail, and measuring a frame.
 
 The order may change as I write, but the direction will not: from "it renders" to "I know why it renders like that".
 

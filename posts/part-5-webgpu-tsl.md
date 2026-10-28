@@ -719,4 +719,4 @@ The fresnel and fbm ideas are the same ones Part 4 explained. The noise itself c
 
 ## Next time
 
-We can now render with WebGPU, write materials as node graphs and move tens of thousands of particles on the GPU. Next, in Part 6, we will look at **post-processing**: rendering the scene to a texture first and then running effects over the whole image, such as bloom and colour grading, using the same TSL nodes. The glow of this part's orb is an obvious place to start. See you there.
+We can now render with WebGPU, write materials as node graphs and move tens of thousands of particles on the GPU. In [Part 6](/3d-tutorial/part-6-post-processing/) we look at **post-processing**: rendering the scene to a texture first and then running effects over the whole image. We build bloom, a lens effect and anti-aliasing with `EffectComposer` first, then rebuild the same chain with TSL nodes, including a bloom that only picks up what glows. [See you there.](/3d-tutorial/part-6-post-processing/)

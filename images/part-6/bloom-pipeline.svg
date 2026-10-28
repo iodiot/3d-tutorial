@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 990 400" width="990" height="400" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs><marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9aa3b5"/></marker><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#7cf5d4"/></marker><marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff6fae"/></marker><marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6fd8ff"/></marker><marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffb35c"/></marker></defs>
+  <rect width="990" height="400" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">BLOOM: KEEP THE BRIGHT PARTS, BLUR THEM, ADD THEM BACK</text>
+  <rect x="32" y="90" width="150" height="120" rx="12" fill="#1b2030" stroke="#6fd8ff" stroke-width="2" />
+  <text x="50" y="116" fill="#6fd8ff" font-size="15" font-weight="700" text-anchor="start">HDR scene</text>
+  <text x="50" y="140" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">HalfFloat colour,</text>
+  <text x="50" y="157" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">neon at 3.0–6.0</text>
+  <line x1="186" y1="150" x2="222" y2="150" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <rect x="226" y="90" width="170" height="120" rx="12" fill="#1b2030" stroke="#ffb35c" stroke-width="2" />
+  <text x="244" y="116" fill="#ffb35c" font-size="15" font-weight="700" text-anchor="start">bright pass</text>
+  <text x="244" y="140" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">keep pixels whose</text>
+  <text x="244" y="157" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">luminance &gt; threshold,</text>
+  <text x="244" y="174" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">the rest goes black</text>
+  <line x1="400" y1="150" x2="436" y2="150" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <rect x="436" y="70" width="330" height="160" rx="14" fill="none" stroke="#6b7386" stroke-dasharray="6 5"/>
+  <text x="452" y="90" fill="#6b7386" font-size="12" font-weight="700" text-anchor="start">blur at 5 sizes (mips)</text>
+  <rect x="440" y="120" width="59.519999999999996" height="96" rx="5" fill="#2b2134" stroke="#a98bff" stroke-width="1.5"/>
+  <text x="469.76" y="230" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="middle">½</text>
+  <line x1="501.52" y1="168" x2="513.52" y2="168" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <rect x="517.52" y="132" width="44.64" height="72" rx="5" fill="#2b2134" stroke="#a98bff" stroke-width="1.5"/>
+  <text x="539.84" y="218" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="middle">¼</text>
+  <line x1="564.16" y1="168" x2="576.16" y2="168" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <rect x="580.16" y="141" width="33.48" height="54" rx="5" fill="#2b2134" stroke="#a98bff" stroke-width="1.5"/>
+  <text x="596.9" y="209" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="middle">⅛</text>
+  <line x1="615.64" y1="168" x2="627.64" y2="168" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <rect x="631.64" y="148" width="24.8" height="40" rx="5" fill="#2b2134" stroke="#a98bff" stroke-width="1.5"/>
+  <text x="644.04" y="202" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="middle">1/16</text>
+  <line x1="658.4399999999999" y1="168" x2="670.4399999999999" y2="168" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <rect x="674.4399999999999" y="153" width="18.6" height="30" rx="5" fill="#2b2134" stroke="#a98bff" stroke-width="1.5"/>
+  <text x="683.7399999999999" y="197" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="middle">1/32</text>
+  <line x1="770" y1="150" x2="806" y2="150" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <rect x="810" y="90" width="150" height="120" rx="12" fill="#1b2030" stroke="#a98bff" stroke-width="2" />
+  <text x="828" y="116" fill="#a98bff" font-size="15" font-weight="700" text-anchor="start">combine</text>
+  <text x="828" y="140" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">weighted sum of the</text>
+  <text x="828" y="157" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">mips, shaped by radius,</text>
+  <text x="828" y="174" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">× strength</text>
+  <path d="M885 214 V262 H110 V290" fill="none" stroke="#9aa3b5" stroke-width="2" marker-end="url(#g)"/>
+  <text x="500" y="256" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="middle">small mips = wide, soft halo · big mips = tight core</text>
+  <rect x="32" y="294" width="300" height="70" rx="12" fill="#1b2030" stroke="#7cf5d4" stroke-width="2" />
+  <text x="50" y="320" fill="#7cf5d4" font-size="15" font-weight="700" text-anchor="start">scene + glow</text>
+  <text x="50" y="344" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">added on top, still in HDR</text>
+  <line x1="336" y1="329" x2="372" y2="329" stroke="#7cf5d4" stroke-width="2" marker-end="url(#m)"/>
+  <rect x="376" y="294" width="300" height="70" rx="12" fill="#1b2030" stroke="#ff6fae" stroke-width="2" />
+  <text x="394" y="320" fill="#ff6fae" font-size="15" font-weight="700" text-anchor="start">tone mapping + sRGB</text>
+  <text x="394" y="344" fill="#9aa3b5" font-size="11.5" font-weight="400" text-anchor="start">OutputPass / renderOutput(): last</text>
+  <text x="700" y="316" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">UnrealBloomPass (WebGL)</text>
+  <text x="700" y="334" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">bloom() node (WebGPU)</text>
+  <text x="700" y="352" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">both follow these steps</text>
+
+</svg>
