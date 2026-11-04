@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 436" width="900" height="436" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs><marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9aa3b5"/></marker><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#7cf5d4"/></marker><marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff6fae"/></marker><marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6fd8ff"/></marker><marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffb35c"/></marker></defs>
+  <rect width="900" height="436" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">NAIVE · MERGED · INSTANCED · BATCHED</text>
+  <rect x="32" y="76" width="196" height="300" rx="12" fill="#1b2030" stroke="#ffb35c" stroke-width="2" />
+  <text x="48" y="104" fill="#ffb35c" font-size="17" font-weight="700" text-anchor="start">naive</text>
+  <text x="48" y="124" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">one Mesh per object</text>
+  <rect x="54" y="146" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="82" y="146" width="18" height="18" rx="3" fill="#6fd8ff" opacity="1"/>
+  <rect x="110" y="146" width="18" height="18" rx="3" fill="#7cf5d4" opacity="1"/>
+  <rect x="138" y="146" width="18" height="18" rx="3" fill="#ff6fae" opacity="1"/>
+  <rect x="166" y="146" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="194" y="146" width="18" height="18" rx="3" fill="#6fd8ff" opacity="1"/>
+  <rect x="54" y="174" width="18" height="18" rx="3" fill="#7cf5d4" opacity="1"/>
+  <rect x="82" y="174" width="18" height="18" rx="3" fill="#ff6fae" opacity="1"/>
+  <rect x="110" y="174" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="138" y="174" width="18" height="18" rx="3" fill="#6fd8ff" opacity="1"/>
+  <rect x="166" y="174" width="18" height="18" rx="3" fill="#7cf5d4" opacity="1"/>
+  <rect x="194" y="174" width="18" height="18" rx="3" fill="#ff6fae" opacity="1"/>
+  <text x="48" y="226" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">N meshes</text>
+  <text x="48" y="243" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">N × matrix upload</text>
+  <text x="48" y="260" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">N × draw</text>
+  <text x="48" y="296" fill="#6b7386" font-size="10.5" font-weight="400" text-anchor="start">draw calls</text>
+  <text x="48" y="320" fill="#ffb35c" font-size="16" font-weight="700" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">N draw calls</text>
+  <text x="48" y="352" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="start">moves: yes · culls: each</text>
+  <rect x="244" y="76" width="196" height="300" rx="12" fill="#1b2030" stroke="#6fd8ff" stroke-width="2" />
+  <text x="260" y="104" fill="#6fd8ff" font-size="17" font-weight="700" text-anchor="start">merged</text>
+  <text x="260" y="124" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">mergeGeometries()</text>
+  <rect x="266" y="146" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="294" y="146" width="18" height="18" rx="3" fill="#6fd8ff" opacity="1"/>
+  <rect x="322" y="146" width="18" height="18" rx="3" fill="#7cf5d4" opacity="1"/>
+  <rect x="350" y="146" width="18" height="18" rx="3" fill="#ff6fae" opacity="1"/>
+  <rect x="378" y="146" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="406" y="146" width="18" height="18" rx="3" fill="#6fd8ff" opacity="1"/>
+  <rect x="266" y="174" width="18" height="18" rx="3" fill="#7cf5d4" opacity="1"/>
+  <rect x="294" y="174" width="18" height="18" rx="3" fill="#ff6fae" opacity="1"/>
+  <rect x="322" y="174" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="350" y="174" width="18" height="18" rx="3" fill="#6fd8ff" opacity="1"/>
+  <rect x="378" y="174" width="18" height="18" rx="3" fill="#7cf5d4" opacity="1"/>
+  <rect x="406" y="174" width="18" height="18" rx="3" fill="#ff6fae" opacity="1"/>
+  <rect x="260" y="140" width="170" height="54" rx="6" fill="none" stroke="#6fd8ff" stroke-width="2" stroke-dasharray="4 3"/>
+  <text x="260" y="226" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">one big geometry</text>
+  <text x="260" y="243" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">baked positions</text>
+  <text x="260" y="260" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">static</text>
+  <text x="260" y="296" fill="#6b7386" font-size="10.5" font-weight="400" text-anchor="start">draw calls</text>
+  <text x="260" y="320" fill="#6fd8ff" font-size="16" font-weight="700" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">1 draw call</text>
+  <text x="260" y="352" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="start">moves: no · culls: all or nothing</text>
+  <rect x="456" y="76" width="196" height="300" rx="12" fill="#1b2030" stroke="#7cf5d4" stroke-width="2" />
+  <text x="472" y="104" fill="#7cf5d4" font-size="17" font-weight="700" text-anchor="start">instanced</text>
+  <text x="472" y="124" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">InstancedMesh</text>
+  <rect x="478" y="146" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="506" y="146" width="18" height="18" rx="3" fill="#6fd8ff" opacity="0.25"/>
+  <rect x="534" y="146" width="18" height="18" rx="3" fill="#7cf5d4" opacity="0.25"/>
+  <rect x="562" y="146" width="18" height="18" rx="3" fill="#ff6fae" opacity="0.25"/>
+  <rect x="590" y="146" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="618" y="146" width="18" height="18" rx="3" fill="#6fd8ff" opacity="0.25"/>
+  <rect x="478" y="174" width="18" height="18" rx="3" fill="#7cf5d4" opacity="0.25"/>
+  <rect x="506" y="174" width="18" height="18" rx="3" fill="#ff6fae" opacity="0.25"/>
+  <rect x="534" y="174" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="562" y="174" width="18" height="18" rx="3" fill="#6fd8ff" opacity="0.25"/>
+  <rect x="590" y="174" width="18" height="18" rx="3" fill="#7cf5d4" opacity="0.25"/>
+  <rect x="618" y="174" width="18" height="18" rx="3" fill="#ff6fae" opacity="0.25"/>
+  <text x="472" y="226" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">one geometry</text>
+  <text x="472" y="243" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">N matrices</text>
+  <text x="472" y="260" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">same shape only</text>
+  <text x="472" y="296" fill="#6b7386" font-size="10.5" font-weight="400" text-anchor="start">draw calls</text>
+  <text x="472" y="320" fill="#7cf5d4" font-size="16" font-weight="700" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">1 per geometry</text>
+  <text x="472" y="352" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="start">moves: yes · culls: all or nothing</text>
+  <rect x="668" y="76" width="196" height="300" rx="12" fill="#1b2030" stroke="#a98bff" stroke-width="2" />
+  <text x="684" y="104" fill="#a98bff" font-size="17" font-weight="700" text-anchor="start">batched</text>
+  <text x="684" y="124" fill="#9aa3b5" font-size="11" font-weight="400" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">BatchedMesh</text>
+  <rect x="690" y="146" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="718" y="146" width="18" height="18" rx="3" fill="#6fd8ff" opacity="1"/>
+  <rect x="746" y="146" width="18" height="18" rx="3" fill="#7cf5d4" opacity="1"/>
+  <rect x="774" y="146" width="18" height="18" rx="3" fill="#ff6fae" opacity="1"/>
+  <rect x="802" y="146" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="830" y="146" width="18" height="18" rx="3" fill="#6fd8ff" opacity="1"/>
+  <rect x="690" y="174" width="18" height="18" rx="3" fill="#7cf5d4" opacity="1"/>
+  <rect x="718" y="174" width="18" height="18" rx="3" fill="#ff6fae" opacity="1"/>
+  <rect x="746" y="174" width="18" height="18" rx="3" fill="#ffb35c" opacity="1"/>
+  <rect x="774" y="174" width="18" height="18" rx="3" fill="#6fd8ff" opacity="1"/>
+  <rect x="802" y="174" width="18" height="18" rx="3" fill="#7cf5d4" opacity="1"/>
+  <rect x="830" y="174" width="18" height="18" rx="3" fill="#ff6fae" opacity="1"/>
+  <text x="684" y="226" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">many geometries</text>
+  <text x="684" y="243" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">N matrices</text>
+  <text x="684" y="260" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="start">one material</text>
+  <text x="684" y="296" fill="#6b7386" font-size="10.5" font-weight="400" text-anchor="start">draw calls</text>
+  <text x="684" y="320" fill="#a98bff" font-size="16" font-weight="700" text-anchor="start" font-family="ui-monospace,Menlo,Consolas,monospace">1 (multi-draw)</text>
+  <text x="684" y="352" fill="#9aa3b5" font-size="10.5" font-weight="400" text-anchor="start">moves: yes · culls: each</text>
+  <text x="32" y="408" fill="#e7eaf0" font-size="12.5" font-weight="400" text-anchor="start">Measured in step 4 with 5,000 objects of 4 shapes: naive 4,236 calls · merged 2 · instanced 5 · batched 2 (each count includes 1 for the ground).</text>
+
+</svg>

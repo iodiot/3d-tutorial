@@ -4,9 +4,9 @@
   "lead": "A step-by-step series for frontend developers: from a first lit cube to shaders, WebGPU and compute. Every part comes with diagrams, screenshots and a live demo you can open in your browser.",
   "planned": [
     {
-      "part": 7,
-      "title": "Performance",
-      "about": "Draw calls and why they matter, thousands of objects with InstancedMesh and BatchedMesh, levels of detail, and measuring where a frame's time goes."
+      "part": 8,
+      "title": "Interaction and Physics",
+      "about": "Picking objects with Raycaster, including instances, dragging them, and a physics engine (Rapier) so thousands of instanced objects fall, collide and stack."
     }
   ],
   "support": {

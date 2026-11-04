@@ -30,7 +30,8 @@ Roughly, the plan is:
 4. [Your first shaders](/3d-tutorial/part-4-shaders/): `ShaderMaterial`, GLSL basics, and what the GPU is actually doing.
 5. [WebGPU and TSL](/3d-tutorial/part-5-webgpu-tsl/): Three.js's `WebGPURenderer`, the TSL shading language and compute shaders.
 6. [Post-processing and bloom](/3d-tutorial/part-6-post-processing/): render targets, `EffectComposer`, bloom and anti-aliasing, and the same chain with TSL nodes.
-7. **Performance** (next): draw calls, instancing and batching, levels of detail, and measuring a frame.
+7. [Faster frames](/3d-tutorial/part-7-performance/): measuring a frame, draw calls, `InstancedMesh` and `BatchedMesh`, LOD, texture and shadow budgets, and `dispose()`.
+8. **Interaction and physics** (next): picking objects with `Raycaster`, dragging them, and a physics engine.
 
 The order may change as I write, but the direction will not: from "it renders" to "I know why it renders like that".
 
