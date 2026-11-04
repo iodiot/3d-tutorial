@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 570" width="900" height="570" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif">
+  <defs><marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9aa3b5"/></marker><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#7cf5d4"/></marker><marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff6fae"/></marker><marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6fd8ff"/></marker><marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffb35c"/></marker></defs>
+  <rect width="900" height="570" rx="18" fill="#12151d"/>
+  <text x="32" y="44" fill="#7cf5d4" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" letter-spacing="2">LOD AND FRUSTUM CULLING</text>
+  <clipPath id="half"><rect x="120" y="110" width="760" height="380"/></clipPath>
+  <path d="M120 300 L760 130 L760 470 Z" fill="#6fd8ff" fill-opacity="0.07" stroke="#6fd8ff" stroke-width="2"/>
+  <circle cx="120" cy="300" r="180" fill="none" stroke="#ff6fae" stroke-width="1.5" stroke-dasharray="5 4" opacity=".7" clip-path="url(#half)"/>
+  <text x="134" y="512" fill="#ff6fae" font-size="12" font-weight="700" text-anchor="start">high · 8,820 tris</text>
+  <circle cx="120" cy="300" r="400" fill="none" stroke="#ffb35c" stroke-width="1.5" stroke-dasharray="5 4" opacity=".7" clip-path="url(#half)"/>
+  <text x="314" y="512" fill="#ffb35c" font-size="12" font-weight="700" text-anchor="start">medium · 720</text>
+  <circle cx="120" cy="300" r="640" fill="none" stroke="#7cf5d4" stroke-width="1.5" stroke-dasharray="5 4" opacity=".7" clip-path="url(#half)"/>
+  <text x="534" y="512" fill="#7cf5d4" font-size="12" font-weight="700" text-anchor="start">low · 80</text>
+  <circle cx="150" cy="139" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="150" cy="185" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="150" cy="231" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="150" cy="277" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="150" cy="323" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="150" cy="369" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="150" cy="415" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="150" cy="461" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="208" cy="139" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="208" cy="185" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="208" cy="231" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="208" cy="277" r="11" fill="#ff6fae"/>
+  <circle cx="208" cy="323" r="11" fill="#ff6fae"/>
+  <circle cx="208" cy="369" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="208" cy="415" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="208" cy="461" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="266" cy="139" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="266" cy="185" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="266" cy="231" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="266" cy="277" r="11" fill="#ff6fae"/>
+  <circle cx="266" cy="323" r="11" fill="#ff6fae"/>
+  <circle cx="266" cy="369" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="266" cy="415" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="266" cy="461" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="324" cy="139" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="324" cy="185" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="324" cy="231" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="324" cy="277" r="8" fill="#ffb35c"/>
+  <circle cx="324" cy="323" r="8" fill="#ffb35c"/>
+  <circle cx="324" cy="369" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="324" cy="415" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="324" cy="461" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="382" cy="139" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="382" cy="185" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="382" cy="231" r="8" fill="#ffb35c"/>
+  <circle cx="382" cy="277" r="8" fill="#ffb35c"/>
+  <circle cx="382" cy="323" r="8" fill="#ffb35c"/>
+  <circle cx="382" cy="369" r="8" fill="#ffb35c"/>
+  <circle cx="382" cy="415" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="382" cy="461" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="440" cy="139" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="440" cy="185" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="440" cy="231" r="8" fill="#ffb35c"/>
+  <circle cx="440" cy="277" r="8" fill="#ffb35c"/>
+  <circle cx="440" cy="323" r="8" fill="#ffb35c"/>
+  <circle cx="440" cy="369" r="8" fill="#ffb35c"/>
+  <circle cx="440" cy="415" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="440" cy="461" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="498" cy="139" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="498" cy="185" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="498" cy="231" r="8" fill="#ffb35c"/>
+  <circle cx="498" cy="277" r="8" fill="#ffb35c"/>
+  <circle cx="498" cy="323" r="8" fill="#ffb35c"/>
+  <circle cx="498" cy="369" r="8" fill="#ffb35c"/>
+  <circle cx="498" cy="415" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="498" cy="461" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="556" cy="139" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="556" cy="185" r="5" fill="#7cf5d4"/>
+  <circle cx="556" cy="231" r="5" fill="#7cf5d4"/>
+  <circle cx="556" cy="277" r="5" fill="#7cf5d4"/>
+  <circle cx="556" cy="323" r="5" fill="#7cf5d4"/>
+  <circle cx="556" cy="369" r="5" fill="#7cf5d4"/>
+  <circle cx="556" cy="415" r="5" fill="#7cf5d4"/>
+  <circle cx="556" cy="461" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="614" cy="139" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="614" cy="185" r="5" fill="#7cf5d4"/>
+  <circle cx="614" cy="231" r="5" fill="#7cf5d4"/>
+  <circle cx="614" cy="277" r="5" fill="#7cf5d4"/>
+  <circle cx="614" cy="323" r="5" fill="#7cf5d4"/>
+  <circle cx="614" cy="369" r="5" fill="#7cf5d4"/>
+  <circle cx="614" cy="415" r="5" fill="#7cf5d4"/>
+  <circle cx="614" cy="461" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="672" cy="139" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="672" cy="185" r="5" fill="#7cf5d4"/>
+  <circle cx="672" cy="231" r="5" fill="#7cf5d4"/>
+  <circle cx="672" cy="277" r="5" fill="#7cf5d4"/>
+  <circle cx="672" cy="323" r="5" fill="#7cf5d4"/>
+  <circle cx="672" cy="369" r="5" fill="#7cf5d4"/>
+  <circle cx="672" cy="415" r="5" fill="#7cf5d4"/>
+  <circle cx="672" cy="461" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="730" cy="139" r="5" fill="#7cf5d4"/>
+  <circle cx="730" cy="185" r="5" fill="#7cf5d4"/>
+  <circle cx="730" cy="231" r="5" fill="#7cf5d4"/>
+  <circle cx="730" cy="277" r="5" fill="#7cf5d4"/>
+  <circle cx="730" cy="323" r="5" fill="#7cf5d4"/>
+  <circle cx="730" cy="369" r="5" fill="#7cf5d4"/>
+  <circle cx="730" cy="415" r="5" fill="#7cf5d4"/>
+  <circle cx="730" cy="461" r="5" fill="#7cf5d4"/>
+  <circle cx="788" cy="139" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="788" cy="185" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="788" cy="231" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="788" cy="277" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="788" cy="323" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="788" cy="369" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="788" cy="415" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="788" cy="461" r="5" fill="none" stroke="#6b7386" stroke-width="1.5"/>
+  <circle cx="120" cy="300" r="9" fill="#e7eaf0"/>
+  <text x="108" y="330" fill="#e7eaf0" font-size="12" font-weight="400" text-anchor="middle">camera</text>
+  <text x="32" y="76" fill="#9aa3b5" font-size="12" font-weight="400" text-anchor="start">Seen from above. Filled: inside the frustum, drawn with the level its distance picks. Hollow: outside, skipped before any draw call.</text>
+  <text x="32" y="546" fill="#e7eaf0" font-size="12.5" font-weight="400" text-anchor="start">LOD.addLevel(mesh, distance) picks the mesh; object.frustumCulled skips it. Step 5: 900 spheres, 7.94 M → 163 K triangles.</text>
+
+</svg>

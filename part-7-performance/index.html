@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Three.js from Scratch, Part 7: Faster Frames — Mike Smahin</title>
+<meta name="description" content="Make three.js scenes fast, and know why they are: measuring a frame with renderer.info, stats.js and Chrome DevTools, CPU-bound vs GPU-bound, draw calls, merging geometries, InstancedMesh and BatchedMesh, LOD and frustum culling, texture, KTX2 and pixel-ratio budgets, the cost of shadows, dispose() and memory leaks, rendering on demand, and what changes on WebGPURenderer. With a live stress test, diagrams and screenshots.">
+<link rel="canonical" href="https://iodiot.github.io/3d-tutorial/part-7-performance/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Three.js from Scratch, Part 7: Faster Frames — Mike Smahin">
+<meta property="og:description" content="Make three.js scenes fast, and know why they are: measuring a frame with renderer.info, stats.js and Chrome DevTools, CPU-bound vs GPU-bound, draw calls, merging geometries, InstancedMesh and BatchedMesh, LOD and frustum culling, texture, KTX2 and pixel-ratio budgets, the cost of shadows, dispose() and memory leaks, rendering on demand, and what changes on WebGPURenderer. With a live stress test, diagrams and screenshots.">
+<meta property="og:url" content="https://iodiot.github.io/3d-tutorial/part-7-performance/">
+<meta property="og:image" content="https://iodiot.github.io/3d-tutorial/images/part-7/social-card.png">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="675">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d12'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' text-anchor='middle' fill='%237cf5d4'%3E3D%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/3d-tutorial/assets/style.css?v=2">
+</head>
+<body>
+<div class="bg"></div>
+<header class="nav">
+  <a class="brand" href="/">Mike Smahin</a>
+  <nav>
+    <a href="/3d-tutorial/">3D Tutorial</a>
+    <a href="/blog/">Blog</a>
+    <a href="/">Portfolio</a>
+  </nav>
+</header>
+<main>
+<article class="post">
+  <header class="post-head">
+    <p class="eyebrow"><a href="/3d-tutorial/">← Three.js from Scratch · all parts</a></p>
+    <h1>Three.js from Scratch, Part 7: Faster Frames</h1>
+    <p class="meta-line"><time datetime="2026-11-04">Nov 4, 2026</time> · Mike Smahin</p>
+    <ul class="tags"><li class="topic">part 7</li><li>three.js</li><li>performance</li><li>instancing</li><li>batchedmesh</li><li>lod</li><li>webgl</li></ul>
+  </header>
+  <div class="prose"><p>Until now every demo in this series had a few dozen objects, and the frame rate took care of itself. Real scenes are not like that. A city has ten thousand windows, a forest has twenty thousand trees, a product configurator loads a new 4K texture every time someone clicks a colour. At some point the frame rate drops, the laptop fans start, and the question is no longer &quot;how do I draw this&quot; but &quot;why is this slow, and what do I change&quot;.</p>
+<p>This part is about answering that question with numbers instead of guesses. First we measure a frame and find out whether the CPU or the GPU is the bottleneck. Then we take the biggest CPU cost in most three.js scenes, <strong>draw calls</strong>, and cut it down three different ways: merging, <code>InstancedMesh</code> and <code>BatchedMesh</code>. Then the GPU side: levels of detail, frustum culling, pixels, textures and shadows. We finish with two things that are not about speed at all but bite every real app: freeing GPU memory, and not drawing frames nobody needs. Open the stress test and switch the modes; keep an eye on <strong>draw calls</strong>:</p>
+<div class="demo">
+  <iframe src="/3d-tutorial/demos/part-7/" title="Live demo: a stress test. A field of thousands of small boxes, spheres, tori and cones in six colours bobbing and turning on a dark floor. A panel switches between four ways to draw them, naive meshes, merged, InstancedMesh and BatchedMesh, and sets the number of objects from 1,000 to 50,000. A status box shows live draw calls, triangles and frame time, and a benchmark button runs all four modes and prints a table." loading="lazy"></iframe>
+</div>
+<p class="demo-links"><a href="/3d-tutorial/demos/part-7/" target="_blank" rel="noopener">Open the demo full screen ↗</a> · <a href="https://github.com/iodiot/3d-tutorial/tree/main/demos/part-7" target="_blank" rel="noopener">Source on GitHub ↗</a></p>
+<blockquote>
+<p>Everything uses Three.js <strong>r186</strong> (npm version <code>0.186.1</code>) and the classic <code>WebGLRenderer</code>, with the import map from Parts 1 to 4; the last section shows what changes on <code>WebGPURenderer</code>. Two r186 details matter here: <code>THREE.Clock</code> has been <strong>deprecated since r183</strong> in favour of <code>THREE.Timer</code> (we keep our own clock in the loop), and <code>PCFSoftShadowMap</code> <strong>is gone</strong>: setting it prints a warning and you get <code>PCFShadowMap</code>.</p>
+</blockquote>
+<blockquote>
+<p><strong>About the numbers in this article.</strong> The screenshots were taken in a headless browser with a <em>software</em> GPU (SwiftShader), so their frame times are far slower than on your machine, and the ranking of frame times can differ from a real GPU. Draw calls and triangle counts are exact and the same everywhere. Run the demos yourself: your own numbers are the ones that count.</p>
+</blockquote>
+<h2>Step 1: measuring a frame</h2>
+<p>Optimising without measuring is guessing. There are three tools worth knowing, from cheapest to most detailed.</p>
+<p><strong><code>renderer.info</code>.</strong> Every <code>WebGLRenderer</code> counts what it did:</p>
+<pre class="hljs"><code class="language-js">renderer.<span class="hljs-property">info</span>.<span class="hljs-property">render</span>.<span class="hljs-property">calls</span>       <span class="hljs-comment">// draw calls in the last render()</span>
+renderer.<span class="hljs-property">info</span>.<span class="hljs-property">render</span>.<span class="hljs-property">triangles</span>   <span class="hljs-comment">// triangles drawn</span>
+renderer.<span class="hljs-property">info</span>.<span class="hljs-property">render</span>.<span class="hljs-property">frame</span>       <span class="hljs-comment">// how many frames so far</span>
+renderer.<span class="hljs-property">info</span>.<span class="hljs-property">memory</span>.<span class="hljs-property">geometries</span>  <span class="hljs-comment">// geometries that have GPU buffers right now</span>
+renderer.<span class="hljs-property">info</span>.<span class="hljs-property">memory</span>.<span class="hljs-property">textures</span>    <span class="hljs-comment">// textures uploaded to the GPU right now</span>
+renderer.<span class="hljs-property">info</span>.<span class="hljs-property">programs</span>.<span class="hljs-property">length</span>    <span class="hljs-comment">// compiled shader programs</span>
+</code></pre>
+<p>One trap: <code>info.autoReset</code> is <code>true</code>, so <code>render.calls</code> and <code>render.triangles</code> are <strong>reset at the start of every <code>render()</code></strong>. Read them right after you render, not in a <code>setInterval</code>. Shadow passes are drawn inside the same <code>render()</code>, so they are included. If you render several times per frame (a composer, a minimap), set <code>renderer.info.autoReset = false</code> and call <code>renderer.info.reset()</code> yourself once per frame.</p>
+<p><strong>stats.js.</strong> The little FPS graph you have seen in every three.js example ships with three:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> <span class="hljs-title class_">Stats</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/libs/stats.module.js&#x27;</span>;
+<span class="hljs-keyword">const</span> stats = <span class="hljs-keyword">new</span> <span class="hljs-title class_">Stats</span>();
+<span class="hljs-variable language_">document</span>.<span class="hljs-property">body</span>.<span class="hljs-title function_">appendChild</span>(stats.<span class="hljs-property">dom</span>);
+<span class="hljs-comment">// in the loop:</span>
+stats.<span class="hljs-title function_">update</span>();          <span class="hljs-comment">// or stats.begin() ... stats.end() around your work; click it to switch to ms or MB</span>
+</code></pre>
+<p><strong>Our own timer.</strong> FPS alone hides <em>where</em> the time goes. Our demos time the JavaScript of each frame, our updates plus <code>renderer.render()</code>, and compare it with the time between frames:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">function</span> <span class="hljs-title function_">timed</span>(<span class="hljs-params">work</span>) {
+  <span class="hljs-keyword">const</span> t0 = performance.<span class="hljs-title function_">now</span>();
+  <span class="hljs-title function_">work</span>();                                   <span class="hljs-comment">// our updates + renderer.render()</span>
+  perfCpu += performance.<span class="hljs-title function_">now</span>() - t0;
+  perfFrames++;
+  perf.<span class="hljs-property">calls</span> = renderer.<span class="hljs-property">info</span>.<span class="hljs-property">render</span>.<span class="hljs-property">calls</span>;  <span class="hljs-comment">// read right after render()</span>
+  perf.<span class="hljs-property">triangles</span> = renderer.<span class="hljs-property">info</span>.<span class="hljs-property">render</span>.<span class="hljs-property">triangles</span>;
+  <span class="hljs-comment">// ...every 500 ms: frameMs = elapsed / frames, cpuMs = perfCpu / frames</span>
+}
+</code></pre>
+<p><code>renderer.render()</code> does not wait for the GPU: it only <em>queues</em> commands. So &quot;our JS&quot; is CPU time, and &quot;frame&quot; is the time from one frame to the next, which includes waiting for the GPU.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/step-1-measure.webp" alt="Screenshot of step 1: a field of small coloured boxes, spheres, tori and cones on a dark floor. A status box at the top left shows renderer.info (draw calls 1710, triangles 223.5 K, geometries 5, textures 1, programs 1), timing (frame and our JS in milliseconds) and the canvas size. A stats.js graph sits at the bottom right and a lil-gui panel with objects, pixel ratio and animate at the top right." width="960" height="600" loading="lazy">
+  <figcaption>Step 1: 2,000 separate meshes. renderer.info says 1,710 draw calls: the ones outside the view are culled, and one call is the floor.</figcaption>
+</figure>
+<p><strong>CPU-bound or GPU-bound?</strong> A frame has two workers. The CPU runs your JavaScript and issues draw calls; the GPU then shades the triangles and pixels. Whichever is slower sets the frame rate, and the fix depends on which one it is:</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/frame-budget.svg" alt="Diagram titled where a frame goes, with a time axis from 0 to 18 milliseconds and a dashed line at 16.7 ms labelled 60 fps. Three rows, each with a CPU bar and a GPU bar. Balanced: short JS and draws on the CPU, a short raster bar on the GPU, both finish early. CPU-bound: the CPU bar with 4,000 draw calls reaches past 16.7 ms while the GPU bar is short and idle. GPU-bound: the CPU finishes early, but the GPU bar labelled pixels times shading times shadow passes runs past the line. Footer: halve the pixel ratio; if the frame gets much faster you are GPU-bound, if nothing changes look at the CPU." width="900" height="480" loading="lazy">
+</figure>
+<p>The quickest test is the <strong>pixel-ratio slider</strong>. Pixel ratio 0.5 means a quarter of the pixels. If the frame time drops a lot, the GPU was busy filling pixels. If nothing changes, the pixels were not the problem: look at the CPU, and usually at draw calls.</p>
+<p><strong>Chrome DevTools</strong> shows the rest. Open the Performance panel, press record for a few seconds, and stop. Each frame appears as an &quot;Animation frame fired&quot; task on the <strong>Main</strong> track: expand it and you see your loop, <code>WebGLRenderer.render</code>, and inside it <code>renderBufferDirect</code> once per object. The <strong>GPU</strong> track shows how long the GPU worked on each frame. A main thread full of tiny <code>render</code> calls is CPU-bound; a main thread that is mostly idle with a long GPU bar is GPU-bound. For the GPU in detail, Spector.js (a browser extension) records one frame and lists every single WebGL call.</p>
+<h2>Step 2: draw calls, and merging</h2>
+<p>A <strong>draw call</strong> is one &quot;draw this geometry with this material&quot; command from the CPU to the GPU. In three.js, each visible <code>Mesh</code> is at least one draw call (one per material group), and each shadow-casting mesh is one more per shadow map. Every call costs CPU time <em>before</em> the GPU even starts: three.js picks the shader program, binds buffers, uploads the object's matrices and material uniforms, and the browser validates all of it. A few hundred calls per frame are fine; ten thousand are not, even if each object is just 12 triangles.</p>
+<p>Step 2 draws N objects in four shapes with ordinary meshes. Geometries and materials are shared, which saves memory but not draw calls:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> <span class="hljs-variable constant_">MATERIALS</span> = <span class="hljs-variable constant_">PALETTE</span>.<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">color</span>) =&gt;</span> <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ color, <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.5</span> }));
+<span class="hljs-keyword">const</span> meshes = items.<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">item</span>) =&gt;</span> {
+  <span class="hljs-keyword">const</span> mesh = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-variable constant_">SHAPES</span>[item.<span class="hljs-property">shape</span>], <span class="hljs-variable constant_">MATERIALS</span>[item.<span class="hljs-property">color</span>]);
+  group.<span class="hljs-title function_">add</span>(mesh);
+  <span class="hljs-keyword">return</span> mesh;
+});
+</code></pre>
+<p>The oldest fix is to <strong>merge</strong>: bake every object, already moved to its place, into one big geometry. <code>mergeGeometries</code> from <code>BufferGeometryUtils</code> does it; the per-object colour becomes a vertex colour, so one material is enough:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { mergeGeometries } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/utils/BufferGeometryUtils.js&#x27;</span>;
+
+<span class="hljs-keyword">const</span> parts = items.<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">item</span>) =&gt;</span> {
+  <span class="hljs-keyword">const</span> part = <span class="hljs-variable constant_">SHAPES</span>[item.<span class="hljs-property">shape</span>].<span class="hljs-title function_">clone</span>().<span class="hljs-title function_">applyMatrix4</span>(<span class="hljs-title function_">matrixAt</span>(item, <span class="hljs-number">0</span>, matrix));
+  <span class="hljs-keyword">const</span> colors = <span class="hljs-keyword">new</span> <span class="hljs-title class_">Float32Array</span>(part.<span class="hljs-property">attributes</span>.<span class="hljs-property">position</span>.<span class="hljs-property">count</span> * <span class="hljs-number">3</span>);
+  <span class="hljs-keyword">for</span> (<span class="hljs-keyword">let</span> v = <span class="hljs-number">0</span>; v &lt; colors.<span class="hljs-property">length</span>; v += <span class="hljs-number">3</span>) <span class="hljs-variable constant_">PALETTE</span>[item.<span class="hljs-property">color</span>].<span class="hljs-title function_">toArray</span>(colors, v);
+  part.<span class="hljs-title function_">setAttribute</span>(<span class="hljs-string">&#x27;color&#x27;</span>, <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BufferAttribute</span>(colors, <span class="hljs-number">3</span>));
+  <span class="hljs-keyword">return</span> part;
+});
+<span class="hljs-keyword">const</span> geometry = <span class="hljs-title function_">mergeGeometries</span>(parts);   <span class="hljs-comment">// all parts need the same attributes</span>
+parts.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">part</span>) =&gt;</span> part.<span class="hljs-title function_">dispose</span>());
+<span class="hljs-keyword">const</span> mesh = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(geometry, <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">vertexColors</span>: <span class="hljs-literal">true</span> }));
+</code></pre>
+<p>5,000 objects become <strong>one draw call</strong>. The price: the objects are now just triangles. You cannot move one, hide one or pick one without rebuilding, the whole thing is culled as one object (so all 5,000 are drawn even when you look at ten), and the geometry holds every copy, so memory grows with N. Merging is perfect for static scenery: walls, rocks, a city that never moves.</p>
+<p><code>mergeGeometries</code> needs all geometries to have the same attributes, and either all or none indexed. That is why the box in our shape list has <code>clearGroups()</code> and the sphere is passed through <code>mergeVertices()</code>.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/step-4-naive.webp" alt="Screenshot of step 4 in naive mode with 5,000 objects: the field of small coloured shapes fills the screen. The status box says naive, 5,000 objects, draw calls 4236, triangles 565 K." width="960" height="600" loading="lazy">
+  <figcaption>5,000 meshes: 4,236 draw calls (the rest are outside the view).</figcaption>
+</figure>
+<h2>Step 3: InstancedMesh</h2>
+<p>Most scenes with many objects have many copies of <em>the same</em> object: trees, bolts, bullets, chairs. <code>InstancedMesh</code> draws one geometry many times in <strong>one draw call</strong>, each copy with its own matrix (and optionally its own colour), using WebGL instancing. Unlike merging, every instance can still move:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> mesh = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">InstancedMesh</span>(geometry, material, count);
+mesh.<span class="hljs-property">instanceMatrix</span>.<span class="hljs-title function_">setUsage</span>(<span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">DynamicDrawUsage</span>);   <span class="hljs-comment">// we rewrite it every frame</span>
+<span class="hljs-keyword">for</span> (<span class="hljs-keyword">let</span> i = <span class="hljs-number">0</span>; i &lt; count; i++) {
+  mesh.<span class="hljs-title function_">setMatrixAt</span>(i, <span class="hljs-title function_">matrixAt</span>(items[i], <span class="hljs-number">0</span>, matrix));
+  mesh.<span class="hljs-title function_">setColorAt</span>(i, <span class="hljs-variable constant_">PALETTE</span>[items[i].<span class="hljs-property">color</span>]);
+}
+mesh.<span class="hljs-title function_">computeBoundingSphere</span>();                            <span class="hljs-comment">// see below</span>
+
+<span class="hljs-comment">// every frame:</span>
+<span class="hljs-keyword">for</span> (<span class="hljs-keyword">let</span> i = <span class="hljs-number">0</span>; i &lt; count; i++) mesh.<span class="hljs-title function_">setMatrixAt</span>(i, <span class="hljs-title function_">matrixAt</span>(items[i], t, matrix));
+mesh.<span class="hljs-property">instanceMatrix</span>.<span class="hljs-property">needsUpdate</span> = <span class="hljs-literal">true</span>;                  <span class="hljs-comment">// upload the new matrices</span>
+</code></pre>
+<p>One <code>InstancedMesh</code> = one geometry + one material. Our field has four shapes, so it takes four instanced meshes: <strong>four draw calls</strong> (five with the floor) for any N. The CPU work left is ours: computing N matrices in JavaScript. To change how many are drawn without reallocating, set <code>mesh.count</code> to anything up to the size you created it with.</p>
+<p>Two things catch people out:</p>
+<ul>
+<li><strong>Culling and the bounding sphere.</strong> An <code>InstancedMesh</code> is frustum-culled as one object, using a bounding sphere around <em>all</em> instances. three.js computes it lazily the first time, and <strong>does not update it when you change matrices</strong>. Move instances far from where they started and the whole mesh can vanish at the edge of the screen. Call <code>mesh.computeBoundingSphere()</code> after big moves, or set <code>mesh.frustumCulled = false</code>.</li>
+<li><strong>Raycasting works</strong> and gives you <code>intersection.instanceId</code>, but it tests every instance, so it is slow for very large counts.</li>
+</ul>
+<h2>Step 4: BatchedMesh</h2>
+<p><code>InstancedMesh</code> needs one geometry. <code>BatchedMesh</code> (added in r159 and much improved since) takes <strong>many different geometries</strong> that share one material, and still draws them in one call. It stores every geometry once in a shared buffer, and then you add instances of any of them:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">let</span> vertices = <span class="hljs-number">0</span>, indices = <span class="hljs-number">0</span>;
+<span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> shape <span class="hljs-keyword">of</span> <span class="hljs-variable constant_">SHAPES</span>) { vertices += shape.<span class="hljs-property">attributes</span>.<span class="hljs-property">position</span>.<span class="hljs-property">count</span>; indices += shape.<span class="hljs-property">index</span>.<span class="hljs-property">count</span>; }
+
+<span class="hljs-keyword">const</span> batch = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BatchedMesh</span>(maxInstances, vertices, indices, material);
+<span class="hljs-keyword">const</span> geometryIds = <span class="hljs-variable constant_">SHAPES</span>.<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">shape</span>) =&gt;</span> batch.<span class="hljs-title function_">addGeometry</span>(shape));   <span class="hljs-comment">// each shape stored once</span>
+<span class="hljs-keyword">const</span> ids = items.<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">item</span>) =&gt;</span> {
+  <span class="hljs-keyword">const</span> id = batch.<span class="hljs-title function_">addInstance</span>(geometryIds[item.<span class="hljs-property">shape</span>]);
+  batch.<span class="hljs-title function_">setMatrixAt</span>(id, <span class="hljs-title function_">matrixAt</span>(item, <span class="hljs-number">0</span>, matrix));
+  batch.<span class="hljs-title function_">setColorAt</span>(id, <span class="hljs-variable constant_">PALETTE</span>[item.<span class="hljs-property">color</span>]);
+  <span class="hljs-keyword">return</span> id;
+});
+</code></pre>
+<p>The constructor is <code>new BatchedMesh(maxInstanceCount, maxVertexCount, maxIndexCount, material)</code>: you reserve space up front. Other r186 methods you will want: <code>setVisibleAt(id, bool)</code>, <code>setGeometryIdAt(id, geometryId)</code> to swap the shape of an instance (a cheap LOD), <code>deleteInstance(id)</code>, <code>optimize()</code> to compact the buffers after deleting geometries, and <code>setInstanceCount()</code>/<code>setGeometrySize()</code> to grow it later.</p>
+<p>How is that one draw call? Through the <code>WEBGL_multi_draw</code> extension: one call that draws a list of ranges from the shared buffer. Each frame, three.js builds that list on the CPU, and that is where <code>BatchedMesh</code> beats the other two:</p>
+<ul>
+<li><strong><code>perObjectFrustumCulled</code></strong> (default <code>true</code>): instances outside the view are left out of the list. Merged and instanced meshes are culled all or nothing.</li>
+<li><strong><code>sortObjects</code></strong> (default <code>true</code>): opaque instances are sorted front to back, so the depth test can skip hidden pixels. <code>setCustomSort()</code> replaces the sort.</li>
+</ul>
+<p>Both cost CPU time per instance, and the demo has toggles for them. Where <code>WEBGL_multi_draw</code> is missing, three.js falls back to a loop of ordinary draws, which still saves all the per-object setup.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/four-ways.svg" alt="Diagram with four cards. Naive: one Mesh per object, N meshes, N matrix uploads, N draws; N draw calls; moves yes, culls each. Merged: mergeGeometries, one big geometry with baked positions, static; one draw call; moves no, culls all or nothing. Instanced: InstancedMesh, one geometry, N matrices, same shape only; one draw call per geometry; moves yes, culls all or nothing. Batched: BatchedMesh, many geometries, N matrices, one material; one draw call using multi-draw; moves yes, culls each. Footer: measured in step 4 with 5,000 objects of 4 shapes: naive 4,236 calls, merged 2, instanced 5, batched 2, each including one for the ground." width="900" height="436" loading="lazy">
+</figure>
+<p>Here are the four modes of step 4 side by side, 5,000 objects, the camera from the screenshots:</p>
+<table>
+<thead>
+<tr>
+<th>mode</th>
+<th>draw calls</th>
+<th>triangles</th>
+<th>our JS per frame</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>naive</td>
+<td>4,236</td>
+<td>565 K</td>
+<td>248 ms</td>
+</tr>
+<tr>
+<td>merged</td>
+<td>2</td>
+<td>662 K</td>
+<td>0.2 ms (but 388 ms to build)</td>
+</tr>
+<tr>
+<td>instanced</td>
+<td>5</td>
+<td>662 K</td>
+<td>1.0 ms</td>
+</tr>
+<tr>
+<td>batched</td>
+<td>2</td>
+<td>565 K</td>
+<td>1.8 ms</td>
+</tr>
+</tbody>
+</table>
+<p>The &quot;our JS&quot; column is the one that tells the story, and it is CPU time, so it is far less distorted by the software GPU than the frame time. Two more things to read in it: merged and instanced draw <em>more</em> triangles than naive, because they cannot leave out the objects behind the camera, and only batched gets both one call and per-object culling. Batched spends a little more JavaScript than instanced on that culling and sorting.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/step-4-batched.webp" alt="Screenshot of step 4 in batched mode with 5,000 objects: the same field. The status box says batched, draw calls 2, triangles 565 K. The panel has a BatchedMesh only folder with per-object culling and sort front to back checkboxes." width="960" height="600" loading="lazy">
+  <figcaption>The same 5,000 objects as one BatchedMesh: 2 draw calls.</figcaption>
+</figure>
+<p>Which one to use:</p>
+<ul>
+<li><strong>A few hundred objects:</strong> plain meshes. Do not optimise what is not slow.</li>
+<li><strong>Static scenery:</strong> merge it, maybe per area so culling still works per chunk.</li>
+<li><strong>Many copies of one thing that move:</strong> <code>InstancedMesh</code>.</li>
+<li><strong>Many different shapes with one material that move, appear and disappear:</strong> <code>BatchedMesh</code>.</li>
+<li><strong>Different materials:</strong> group by material; each group is one instanced or batched mesh. Fewer materials is a win of its own (a texture atlas instead of ten textures).</li>
+</ul>
+<h2>Step 5: LOD and frustum culling</h2>
+<p>Draw calls are the CPU side. On the GPU side, the first question is: why draw triangles nobody can see?</p>
+<p><strong>Frustum culling</strong> is on by default. Before drawing, three.js tests each object's bounding sphere against the camera's view volume (the <em>frustum</em>) and skips the ones outside. You turn it off per object with <code>object.frustumCulled = false</code>, which you sometimes need for objects whose vertex shader moves them far from their geometry (Part 4 and 5 style).</p>
+<p><strong>LOD</strong> (level of detail) is for the objects that <em>are</em> visible but far away. A sphere 100 metres away covers 20 pixels; 8,820 triangles is a waste there. <code>THREE.LOD</code> holds several versions of an object and shows one, chosen by distance to the camera:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">const</span> <span class="hljs-variable constant_">LEVELS</span> = [
+  { <span class="hljs-attr">geometry</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">IcosahedronGeometry</span>(<span class="hljs-number">1</span>, <span class="hljs-number">20</span>), <span class="hljs-attr">distance</span>: <span class="hljs-number">0</span> },    <span class="hljs-comment">// 8,820 triangles</span>
+  { <span class="hljs-attr">geometry</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">IcosahedronGeometry</span>(<span class="hljs-number">1</span>, <span class="hljs-number">5</span>),  <span class="hljs-attr">distance</span>: <span class="hljs-number">18</span> },   <span class="hljs-comment">//   720 triangles</span>
+  { <span class="hljs-attr">geometry</span>: <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">IcosahedronGeometry</span>(<span class="hljs-number">1</span>, <span class="hljs-number">1</span>),  <span class="hljs-attr">distance</span>: <span class="hljs-number">45</span> },   <span class="hljs-comment">//    80 triangles</span>
+];
+<span class="hljs-keyword">const</span> lod = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title function_">LOD</span>();
+<span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> level <span class="hljs-keyword">of</span> <span class="hljs-variable constant_">LEVELS</span>) {
+  <span class="hljs-comment">// hysteresis 0.1: switch back only 10% past the distance, so objects on the line do not flicker</span>
+  lod.<span class="hljs-title function_">addLevel</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(level.<span class="hljs-property">geometry</span>, material), level.<span class="hljs-property">distance</span>, <span class="hljs-number">0.1</span>);
+}
+scene.<span class="hljs-title function_">add</span>(lod);
+</code></pre>
+<p><code>lod.autoUpdate</code> is <code>true</code>, so the renderer calls <code>lod.update(camera)</code> for you each frame; <code>lod.getCurrentLevel()</code> tells you which level is showing. In a real project the lower levels come from your 3D tool, or from a simplifier: three ships <code>SimplifyModifier</code>, and glTF-Transform and meshoptimizer can simplify whole models offline.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/lod-frustum.svg" alt="Diagram, seen from above: a camera on the left with its view frustum, a wedge, opening to the right over a grid of objects. Dashed arcs at three distances mark the LOD levels: high with 8,820 triangles near the camera, medium with 720, low with 80 far away. Objects inside the wedge are filled with the colour of their level, large near the camera and small far away. Objects outside the wedge are hollow: skipped before any draw call. Footer: LOD.addLevel(mesh, distance) picks the mesh, object.frustumCulled skips it; step 5, 900 spheres, 7.94 M to 163 K triangles." width="900" height="570" loading="lazy">
+</figure>
+<p>Step 5 has 900 spheres. With both on, 459 draw calls and <strong>163 K triangles</strong> (45 spheres high, 215 medium, 640 low). With both off, 901 draw calls and <strong>7.94 million</strong> triangles for the same picture: almost fifty times as much work for the vertex shader.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/step-5-lod.webp" alt="Screenshot of step 5 with tint by level on: rows of spheres on a dark floor, red near the camera, yellow in the middle distance, blue far away. The status box says 900 spheres, LOD on, frustum culling on, draw calls 459, triangles 163.1 K, levels 45 high, 215 medium, 640 low." width="960" height="600" loading="lazy">
+  <figcaption>Step 5 with "tint by level": red is the 8,820-triangle sphere, yellow 720, blue 80. You cannot see the switch without the tint.</figcaption>
+</figure>
+<p><code>LOD</code> is one more object per sphere, so it does nothing for draw calls. With thousands of objects, combine the ideas: <code>BatchedMesh.setGeometryIdAt(id, lowGeometryId)</code> swaps an instance to a cheaper geometry without leaving the single draw call.</p>
+<h2>Step 6: pixels, textures and shadows</h2>
+<p>The rest of the GPU's work scales with <strong>pixels</strong>, and the numbers grow fast.</p>
+<p><strong>Pixel ratio.</strong> <code>renderer.setPixelRatio(devicePixelRatio)</code> on a phone with a ratio of 3 renders nine times as many pixels as ratio 1. Every demo in this series caps it with <code>Math.min(devicePixelRatio, 2)</code>. On phones or for heavy scenes, 1.5 or even 1 is often the best trade: fewer pixels beat any shader trick. Some apps lower it automatically when the frame rate drops.</p>
+<p><strong>Textures</strong> cost memory and bandwidth. A 2048 × 2048 texture is 4 million pixels; as ordinary RGBA8 that is <strong>16 MB</strong> of GPU memory, <strong>21 MB</strong> with mipmaps, no matter how small the PNG or JPEG was: the GPU stores pixels, not files. Three rules:</p>
+<ul>
+<li><strong>Use the size you need.</strong> A texture never seen larger than 512 pixels on screen does not need to be 4096.</li>
+<li><strong>Keep mipmaps</strong> (<code>generateMipmaps</code> is on by default). They are the texture pre-shrunk to half, quarter and so on. Without them a far-away floor reads random texels and shimmers, and costs <em>more</em> bandwidth. Turn mipmaps off in step 6 and look at the floor. <code>texture.anisotropy = renderer.capabilities.getMaxAnisotropy()</code> keeps floors at a grazing angle sharp.</li>
+<li><strong>Use compressed textures: KTX2.</strong> GPU formats like BC7 (desktop), ASTC and ETC2 (mobile) stay compressed in GPU memory, typically 4 to 8 times smaller than RGBA8, and are read without decompressing. KTX2 with Basis Universal is one file that three.js transcodes to whatever the device supports:</li>
+</ul>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> { <span class="hljs-title class_">KTX2Loader</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/loaders/KTX2Loader.js&#x27;</span>;
+
+<span class="hljs-keyword">const</span> ktx2 = <span class="hljs-keyword">new</span> <span class="hljs-title class_">KTX2Loader</span>()
+  .<span class="hljs-title function_">setTranscoderPath</span>(<span class="hljs-string">&#x27;https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/libs/basis/&#x27;</span>)
+  .<span class="hljs-title function_">detectSupport</span>(renderer);             <span class="hljs-comment">// which GPU formats this device has</span>
+<span class="hljs-keyword">const</span> texture = <span class="hljs-keyword">await</span> ktx2.<span class="hljs-title function_">loadAsync</span>(<span class="hljs-string">&#x27;floor.ktx2&#x27;</span>);
+texture.<span class="hljs-property">colorSpace</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">SRGBColorSpace</span>;
+</code></pre>
+<p>You make KTX2 files with KTX-Software's <code>toktx</code>, or for whole glTF models with <code>gltf-transform etc1s</code> or <code>uastc</code> (Part 3 used such a model with <code>GLTFLoader.setKTX2Loader</code>). The status box of step 6 shows the difference for our floor: about 16 MB as RGBA8, about 4 MB at one byte per pixel.</p>
+<p><strong>Shadows are extra renders.</strong> A light with <code>castShadow</code> renders the scene again, from the light, into its shadow map, every frame. A <code>DirectionalLight</code> or <code>SpotLight</code> is one extra pass; a <code>PointLight</code> renders a cube, <strong>six</strong> passes. In step 6, the scene is 5 draw calls; with the sun's shadow it becomes 9, and with three shadow-casting point lights 81, and 8 million triangles. What helps:</p>
+<ul>
+<li>As few shadow-casting lights as possible, ideally one. Fake the rest with baked lightmaps or a soft blob texture under each object.</li>
+<li><code>castShadow</code> only on objects whose shadow you can see; <code>receiveShadow</code> only where it lands.</li>
+<li>A shadow camera that fits the scene tightly (Part 3), so a smaller <code>shadow.mapSize</code> looks just as sharp.</li>
+<li>For a static scene, <code>renderer.shadowMap.autoUpdate = false</code>, and <code>renderer.shadowMap.needsUpdate = true</code> when something moves.</li>
+</ul>
+<p>Two r186 notes from writing this step: switching <code>renderer.shadowMap.enabled</code> at runtime needs <code>material.needsUpdate = true</code> on every material, because shadows change the shaders; and changing <code>shadow.mapSize</code> on a light that already rendered needs <code>light.shadow.map.dispose(); light.shadow.map = null;</code> so three.js makes a new map with the new size.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/step-6-budgets.webp" alt="Screenshot of step 6 with the sun shadow and three point-light shadows on and mipmaps off: thousands of small shapes on a grid floor that shimmers with moire patterns in the distance. The status box says draw calls 81, triangles 7.99 M, the scene is 5 draws and shadows add passes, canvas 960 by 600, 8.91 M shadow-map pixels per frame, floor 2048 squared RGBA8 16.0 MB, as KTX2 about 4.0 MB." width="960" height="600" loading="lazy">
+  <figcaption>Step 6 with every shadow on: 81 draw calls instead of 5. Mipmaps are off, and the far floor shimmers.</figcaption>
+</figure>
+<h2>Step 7: dispose(), and rendering on demand</h2>
+<h3>Memory leaks</h3>
+<p><code>scene.remove(mesh)</code> takes an object out of the scene graph. It does <strong>not</strong> free anything on the GPU. The vertex buffers three.js made for the geometry, the uploaded textures and the compiled programs all stay, because three.js cannot know whether you will add the object back. In a single page app that loads levels, products or map tiles, that is a leak that ends with a lost WebGL context or a crashed tab on a phone.</p>
+<p>You free GPU resources with <code>dispose()</code>, on each geometry, material and texture:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">function</span> <span class="hljs-title function_">disposeTree</span>(<span class="hljs-params">root</span>) {
+  root.<span class="hljs-title function_">traverse</span>(<span class="hljs-function">(<span class="hljs-params">object</span>) =&gt;</span> {
+    <span class="hljs-keyword">if</span> (!object.<span class="hljs-property">isMesh</span>) <span class="hljs-keyword">return</span>;
+    object.<span class="hljs-property">geometry</span>.<span class="hljs-title function_">dispose</span>();
+    <span class="hljs-keyword">const</span> materials = <span class="hljs-title class_">Array</span>.<span class="hljs-title function_">isArray</span>(object.<span class="hljs-property">material</span>) ? object.<span class="hljs-property">material</span> : [object.<span class="hljs-property">material</span>];
+    <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> material <span class="hljs-keyword">of</span> materials) {
+      <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> value <span class="hljs-keyword">of</span> <span class="hljs-title class_">Object</span>.<span class="hljs-title function_">values</span>(material)) <span class="hljs-keyword">if</span> (value?.<span class="hljs-property">isTexture</span>) value.<span class="hljs-title function_">dispose</span>();
+      material.<span class="hljs-title function_">dispose</span>();
+    }
+  });
+}
+
+scene.<span class="hljs-title function_">remove</span>(level);
+<span class="hljs-title function_">disposeTree</span>(level);
+</code></pre>
+<p>Do not dispose things that are still shared with other objects; shared geometries and materials are disposed once, when the last user is gone. Other things with a <code>dispose()</code>: render targets, <code>InstancedMesh</code> and <code>BatchedMesh</code> (their own buffers), controls, <code>PMREMGenerator</code>, composers and passes (Part 6), and finally <code>renderer.dispose()</code>.</p>
+<p><code>renderer.info.memory</code> is the leak detector. Step 7 loads &quot;levels&quot; of 60 crates, each with its own geometry and canvas texture. With <strong>dispose old level</strong> on, the counts stay at 61 geometries and 61 textures, however many levels you load. Turn it off and press <strong>load 20 levels</strong>: 1,261 of each, and climbing.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/step-7-leak.webp" alt="Screenshot of step 7 after loading 20 levels with dispose off: rows of numbered crates. The status box shows geometries and textures on the GPU at 1,261 each." width="960" height="600" loading="lazy">
+  <figcaption>Twenty levels without dispose(): every old crate is still on the GPU.</figcaption>
+</figure>
+<h3>Render on demand</h3>
+<p>Every demo so far has drawn 60 frames a second with <code>setAnimationLoop</code>, even when nothing moved. For a product viewer, a map or a dashboard, most of the time nothing <em>does</em> move, and those identical frames cost battery, heat and fan noise. <strong>Render on demand</strong> draws only when something changed:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">let</span> needsRender = <span class="hljs-literal">true</span>;
+<span class="hljs-keyword">function</span> <span class="hljs-title function_">requestRender</span>(<span class="hljs-params"></span>) { needsRender = <span class="hljs-literal">true</span>; }
+controls.<span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;change&#x27;</span>, requestRender);   <span class="hljs-comment">// fires while you drag, and while damping settles</span>
+<span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;resize&#x27;</span>, requestRender);
+<span class="hljs-comment">// also call requestRender() after loading something, changing a material, etc.</span>
+
+renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">() =&gt;</span> {
+  controls.<span class="hljs-title function_">update</span>();              <span class="hljs-comment">// cheap; with damping it keeps firing &#x27;change&#x27; for a moment</span>
+  <span class="hljs-keyword">if</span> (!needsRender) <span class="hljs-keyword">return</span>;
+  needsRender = <span class="hljs-literal">false</span>;
+  renderer.<span class="hljs-title function_">render</span>(scene, camera);
+});
+</code></pre>
+<p>The loop still runs, but it costs almost nothing when it returns early. <code>controls.update()</code> must keep running so damping can finish its glide. If you prefer no loop at all, schedule a single <code>requestAnimationFrame(render)</code> from <code>requestRender()</code> instead, as in the diagram. Either way, anything that animates, a mixer, a shader with <code>time</code>, a camera tween, has to keep requesting frames while it runs.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/render-on-demand.svg" alt="Diagram titled render on demand. Top row, every frame with setAnimationLoop: forty filled boxes, one per frame. Bottom row, on demand, only after a change: mostly hollow boxes, with a run of filled boxes while dragging because the controls fire change, a single filled box when a new texture is loaded, and a short run while damping settles. Caption: each filled box is one rendered frame, hollow boxes are frames the GPU never draws, saving battery, fans and heat. Below, code for requestRender with a pending flag and requestAnimationFrame, and controls.addEventListener change requestRender." width="900" height="440" loading="lazy">
+</figure>
+<p>Leave the mouse alone in step 7 and &quot;frames drawn&quot; falls to 0 per second.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/step-7-dispose.webp" alt="Screenshot of step 7: two rows of blue and green crates labelled 1 on a dark background. The status box says render on demand, frames drawn 0 in the last second, level 1 with 60 crates, dispose on, geometries on the GPU 61, textures on the GPU 61, shader programs 2." width="960" height="600" loading="lazy">
+  <figcaption>Nothing moves, nothing is drawn: 0 frames in the last second. With dispose on, the GPU holds one level.</figcaption>
+</figure>
+<h2>The final demo: the stress test</h2>
+<p>The demo at the top puts the four ways of step 4 into one stress test:</p>
+<ul>
+<li><strong>mode</strong>: naive, merged, instanced or batched, built from the same seeded list of objects, so every mode draws exactly the same field.</li>
+<li><strong>objects</strong>: 1,000 to 50,000. Try naive at 20,000, then batched.</li>
+<li><strong>animate</strong>, <strong>sun shadows</strong> and <strong>pixel ratio</strong>, to move the load between CPU and GPU.</li>
+<li><strong>batched: per-object culling</strong>, to see what it costs and saves.</li>
+<li><strong>benchmark all modes</strong>: runs each mode for 1.2 seconds at the current object count and prints a table of draw calls, frame time and JavaScript time.</li>
+</ul>
+<figure>
+  <img src="/3d-tutorial/images/part-7/final-benchmark.webp" alt="Screenshot of the final stress test in instanced mode with 2,000 objects. The status box shows draw calls 5, triangles 258.9 K, and below a benchmark table for 2,000 objects: naive 1709 calls, 96.7 ms frame, 5.60 ms JS; merged 2 calls, 125.2 ms, 0.15 ms; instanced 5 calls, 112.0 ms, 0.74 ms; batched 2 calls, 76.3 ms, 1.27 ms. The lil-gui panel titled Stress test at the top right, a stats.js graph at the bottom right." width="960" height="600" loading="lazy">
+  <figcaption>The benchmark at 2,000 objects, in the software-rendered browser. Look at the calls and JS columns; on a software GPU the frame time is all pixel filling.</figcaption>
+</figure>
+<p>This screenshot is a good example of why you measure on the real target. On SwiftShader, filling pixels on the CPU costs so much that the frame time barely follows the draw calls, and the merged mode, which draws every object including those behind the camera, is the slowest. On a real GPU the pixel work is cheap, and the 1,709 draw calls of the naive mode are what you feel. The JS column, 5.6 ms against 0.15 to 1.3 ms, is the same story on any machine.</p>
+<figure>
+  <img src="/3d-tutorial/images/part-7/demo.gif" alt="Animation of the stress test with 2,000 objects: the field of coloured shapes bobbing and turning while the mode switches from naive to merged, where everything freezes, to instanced and batched. The status box shows the draw calls dropping from about 1,700 to 2, 5 and 2." width="600" height="375" loading="lazy">
+  <figcaption>The stress test switching through the four modes. Recorded on a software GPU, so the motion is slow; the draw calls are real.</figcaption>
+</figure>
+<h2>WebGPURenderer: what changes</h2>
+<p>Everything in this article applies to <code>WebGPURenderer</code> from Part 5: draw calls, instancing, <code>BatchedMesh</code>, <code>LOD</code>, culling, pixel ratio, textures, shadows, <code>dispose()</code> and render on demand work the same way, with the same classes. WebGPU makes each draw call cheaper for the browser to validate, but it does not make 10,000 of them free; three.js still does its per-object work in JavaScript. What differs is mostly the measuring:</p>
+<pre class="hljs"><code class="language-js"><span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/webgpu&#x27;</span>;
+
+<span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGPURenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span>, <span class="hljs-attr">trackTimestamp</span>: <span class="hljs-literal">true</span> });
+<span class="hljs-keyword">await</span> renderer.<span class="hljs-title function_">init</span>();
+
+renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">() =&gt;</span> {
+  renderer.<span class="hljs-title function_">render</span>(scene, camera);
+  renderer.<span class="hljs-property">info</span>.<span class="hljs-property">render</span>.<span class="hljs-property">drawCalls</span>;    <span class="hljs-comment">// draw calls this frame (on WebGL: info.render.calls)</span>
+  renderer.<span class="hljs-property">info</span>.<span class="hljs-property">render</span>.<span class="hljs-property">triangles</span>;
+  renderer.<span class="hljs-title function_">resolveTimestampsAsync</span>(<span class="hljs-string">&#x27;render&#x27;</span>).<span class="hljs-title function_">then</span>(<span class="hljs-function">(<span class="hljs-params">ms</span>) =&gt;</span> {
+    <span class="hljs-keyword">if</span> (ms !== <span class="hljs-literal">undefined</span>) gpuMs = ms;   <span class="hljs-comment">// real GPU time in ms, where the device supports it</span>
+  });
+});
+</code></pre>
+<p><code>trackTimestamp: true</code> asks the GPU itself how long rendering took, using timestamp queries where the browser offers them (<code>timestamp-query</code> on WebGPU, a timer extension on the WebGL 2 fallback). That is the clean answer to &quot;am I GPU-bound&quot;, which <code>WebGLRenderer</code> cannot give you out of the box. One naming trap: on <code>WebGPURenderer</code>, <code>info.render.calls</code> is the number of <code>render()</code> calls <strong>since the app started</strong>, and <code>info.render.frameCalls</code> the number of <code>render()</code> calls this frame; the draw calls are <code>info.render.drawCalls</code>. And compute shaders (Part 5) open a new option for huge counts: move the per-object update itself to the GPU, so the CPU writes nothing per frame.</p>
+<h2>When it goes wrong: common pitfalls</h2>
+<p><strong>Measuring</strong></p>
+<ul>
+<li><strong><code>renderer.info.render.calls</code> is always 0 or tiny.</strong> You read it in a timer or before rendering. It is reset at the start of every <code>render()</code>; read it right after. With several renders per frame, use <code>autoReset = false</code> and <code>info.reset()</code>.</li>
+<li><strong>The frame rate is stuck at exactly 60 (or 120).</strong> That is the display's refresh rate, not your scene's limit. Compare the JavaScript time with the 16.7 ms budget, or test with more objects.</li>
+<li><strong>Numbers differ wildly between machines.</strong> They should. Measure on the slowest device you care about, often a mid-range phone, not on your development machine.</li>
+</ul>
+<p><strong>Instancing and batching</strong></p>
+<ul>
+<li><strong>Instances disappear at the edge of the screen.</strong> The <code>InstancedMesh</code> bounding sphere is from the first frame. Call <code>computeBoundingSphere()</code> after moving instances, or set <code>frustumCulled = false</code>.</li>
+<li><strong>Changed matrices do nothing.</strong> You forgot <code>mesh.instanceMatrix.needsUpdate = true</code> (or <code>instanceColor.needsUpdate</code> for colours). <code>BatchedMesh.setMatrixAt</code> needs no flag.</li>
+<li><strong><code>BatchedMesh</code> throws when adding.</strong> It is full: the vertex, index or instance counts you reserved in the constructor are used up. Reserve more, or grow it with <code>setGeometrySize()</code> and <code>setInstanceCount()</code>.</li>
+<li><strong><code>mergeGeometries</code> returns <code>null</code></strong> and logs an error. The geometries have different attributes, or some are indexed and some not. Make them match (<code>toNonIndexed()</code> or <code>mergeVertices()</code>, <code>deleteAttribute()</code>).</li>
+</ul>
+<p><strong>GPU and memory</strong></p>
+<ul>
+<li><strong>Shadows look blocky after the update to r186.</strong> <code>PCFSoftShadowMap</code> was removed and falls back to <code>PCFShadowMap</code> with a warning. Use <code>PCFShadowMap</code> and tune <code>shadow.radius</code>, or <code>VSMShadowMap</code>.</li>
+<li><strong>Turning shadows on at runtime does nothing.</strong> Materials compiled without shadows; set <code>material.needsUpdate = true</code> on them.</li>
+<li><strong>Memory grows every time you switch a page or level.</strong> <code>renderer.info.memory</code> climbs: something is removed but not disposed. Dispose geometries, materials, textures and render targets.</li>
+<li><strong>The tab crashes on phones with big textures.</strong> Count the memory: width × height × 4 bytes, plus a third for mipmaps. Use smaller or KTX2 textures.</li>
+</ul>
+<p><strong>Render on demand</strong></p>
+<ul>
+<li><strong>The picture freezes halfway through a camera glide.</strong> Damping needs <code>controls.update()</code> every frame, even when you do not render; keep calling it.</li>
+<li><strong>A loaded model or texture only appears after you move the mouse.</strong> Call <code>requestRender()</code> when loading finishes.</li>
+</ul>
+<h2>The full code</h2>
+<p>This is the final stress test, <code>demos/part-7/index.html</code>, in one file:</p>
+<pre class="hljs"><code class="language-html"><span class="hljs-meta">&lt;!doctype <span class="hljs-keyword">html</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">html</span> <span class="hljs-attr">lang</span>=<span class="hljs-string">&quot;en&quot;</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">head</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">charset</span>=<span class="hljs-string">&quot;utf-8&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">meta</span> <span class="hljs-attr">name</span>=<span class="hljs-string">&quot;viewport&quot;</span> <span class="hljs-attr">content</span>=<span class="hljs-string">&quot;width=device-width, initial-scale=1&quot;</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">title</span>&gt;</span>Part 7 · Stress test: naive, merged, InstancedMesh and BatchedMesh<span class="hljs-tag">&lt;/<span class="hljs-name">title</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">style</span>&gt;</span><span class="language-css">
+    <span class="hljs-selector-tag">html</span>, <span class="hljs-selector-tag">body</span> { <span class="hljs-attribute">margin</span>: <span class="hljs-number">0</span>; <span class="hljs-attribute">height</span>: <span class="hljs-number">100%</span>; <span class="hljs-attribute">background</span>: <span class="hljs-number">#0d1017</span>; <span class="hljs-attribute">overflow</span>: hidden; }
+    <span class="hljs-selector-tag">canvas</span> { <span class="hljs-attribute">display</span>: block; }
+    <span class="hljs-selector-class">.panel</span> { <span class="hljs-attribute">position</span>: absolute; <span class="hljs-attribute">left</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">top</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">max-width</span>: <span class="hljs-built_in">calc</span>(<span class="hljs-number">100%</span> - <span class="hljs-number">48px</span>); <span class="hljs-attribute">font</span>: <span class="hljs-number">400</span> <span class="hljs-number">12px</span>/<span class="hljs-number">1.45</span> ui-monospace, Menlo, Consolas, monospace; <span class="hljs-attribute">color</span>: <span class="hljs-number">#e7eaf0</span>; <span class="hljs-attribute">background</span>: <span class="hljs-built_in">rgba</span>(<span class="hljs-number">18</span>, <span class="hljs-number">21</span>, <span class="hljs-number">29</span>, .<span class="hljs-number">85</span>); <span class="hljs-attribute">border</span>: <span class="hljs-number">1px</span> solid <span class="hljs-number">#3a4258</span>; <span class="hljs-attribute">border-radius</span>: <span class="hljs-number">8px</span>; <span class="hljs-attribute">padding</span>: <span class="hljs-number">8px</span> <span class="hljs-number">11px</span>; <span class="hljs-attribute">white-space</span>: pre; <span class="hljs-attribute">overflow</span>: hidden; }
+    <span class="hljs-selector-class">.panel</span> <span class="hljs-selector-tag">b</span> { <span class="hljs-attribute">color</span>: <span class="hljs-number">#ffd166</span>; <span class="hljs-attribute">font-weight</span>: <span class="hljs-number">600</span>; }
+    <span class="hljs-selector-class">.hint</span> { <span class="hljs-attribute">position</span>: absolute; <span class="hljs-attribute">left</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">bottom</span>: <span class="hljs-number">12px</span>; <span class="hljs-attribute">max-width</span>: <span class="hljs-built_in">calc</span>(<span class="hljs-number">100%</span> - <span class="hljs-number">120px</span>); <span class="hljs-attribute">font</span>: <span class="hljs-number">400</span> <span class="hljs-number">12px</span>/<span class="hljs-number">1.45</span> ui-monospace, Menlo, Consolas, monospace; <span class="hljs-attribute">color</span>: <span class="hljs-number">#9aa3b5</span>; <span class="hljs-attribute">pointer-events</span>: none; <span class="hljs-attribute">background</span>: <span class="hljs-built_in">rgba</span>(<span class="hljs-number">13</span>, <span class="hljs-number">16</span>, <span class="hljs-number">23</span>, .<span class="hljs-number">75</span>); <span class="hljs-attribute">padding</span>: <span class="hljs-number">2px</span> <span class="hljs-number">7px</span>; <span class="hljs-attribute">border-radius</span>: <span class="hljs-number">5px</span>; }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">style</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;importmap&quot;</span>&gt;</span><span class="language-javascript">
+    {
+      <span class="hljs-string">&quot;imports&quot;</span>: {
+        <span class="hljs-string">&quot;three&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js&quot;</span>,
+        <span class="hljs-string">&quot;three/addons/&quot;</span>: <span class="hljs-string">&quot;https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/&quot;</span>
+      }
+    }
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">head</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-name">body</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">div</span> <span class="hljs-attr">id</span>=<span class="hljs-string">&quot;status&quot;</span> <span class="hljs-attr">class</span>=<span class="hljs-string">&quot;panel&quot;</span>&gt;</span>Starting…<span class="hljs-tag">&lt;/<span class="hljs-name">div</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">div</span> <span class="hljs-attr">class</span>=<span class="hljs-string">&quot;hint&quot;</span>&gt;</span>Drag to orbit · switch modes and object counts, or press &quot;benchmark all modes&quot;<span class="hljs-tag">&lt;/<span class="hljs-name">div</span>&gt;</span>
+  <span class="hljs-tag">&lt;<span class="hljs-name">script</span> <span class="hljs-attr">type</span>=<span class="hljs-string">&quot;module&quot;</span>&gt;</span><span class="language-javascript">
+    <span class="hljs-keyword">import</span> * <span class="hljs-keyword">as</span> <span class="hljs-variable constant_">THREE</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-title class_">OrbitControls</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/controls/OrbitControls.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { mergeGeometries, mergeVertices } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/utils/BufferGeometryUtils.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> <span class="hljs-title class_">Stats</span> <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/libs/stats.module.js&#x27;</span>;
+    <span class="hljs-keyword">import</span> { <span class="hljs-variable constant_">GUI</span> } <span class="hljs-keyword">from</span> <span class="hljs-string">&#x27;three/addons/libs/lil-gui.module.min.js&#x27;</span>;
+
+    <span class="hljs-keyword">const</span> status = <span class="hljs-variable language_">document</span>.<span class="hljs-title function_">getElementById</span>(<span class="hljs-string">&#x27;status&#x27;</span>);
+    <span class="hljs-keyword">const</span> renderer = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">WebGLRenderer</span>({ <span class="hljs-attr">antialias</span>: <span class="hljs-literal">true</span> });
+    renderer.<span class="hljs-title function_">setPixelRatio</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>(devicePixelRatio, <span class="hljs-number">2</span>));
+    renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    renderer.<span class="hljs-property">toneMapping</span> = <span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">ACESFilmicToneMapping</span>;
+    <span class="hljs-variable language_">document</span>.<span class="hljs-property">body</span>.<span class="hljs-title function_">appendChild</span>(renderer.<span class="hljs-property">domElement</span>);
+
+    <span class="hljs-keyword">const</span> scene = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Scene</span>();
+    scene.<span class="hljs-property">background</span> = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(<span class="hljs-number">0x0d1017</span>);
+    scene.<span class="hljs-property">fog</span> = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Fog</span>(<span class="hljs-number">0x0d1017</span>, <span class="hljs-number">70</span>, <span class="hljs-number">160</span>);
+    <span class="hljs-keyword">const</span> camera = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PerspectiveCamera</span>(<span class="hljs-number">50</span>, innerWidth / innerHeight, <span class="hljs-number">0.5</span>, <span class="hljs-number">400</span>);
+    camera.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">26</span>, <span class="hljs-number">52</span>);
+    <span class="hljs-keyword">const</span> controls = <span class="hljs-keyword">new</span> <span class="hljs-title class_">OrbitControls</span>(camera, renderer.<span class="hljs-property">domElement</span>);
+    controls.<span class="hljs-property">enableDamping</span> = <span class="hljs-literal">true</span>;
+    controls.<span class="hljs-property">target</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">4</span>);
+
+    scene.<span class="hljs-title function_">add</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">HemisphereLight</span>(<span class="hljs-number">0xc4d6ff</span>, <span class="hljs-number">0x2a2420</span>, <span class="hljs-number">1.6</span>));
+    <span class="hljs-keyword">const</span> sun = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">DirectionalLight</span>(<span class="hljs-number">0xffffff</span>, <span class="hljs-number">2.4</span>);
+    sun.<span class="hljs-property">position</span>.<span class="hljs-title function_">set</span>(<span class="hljs-number">30</span>, <span class="hljs-number">40</span>, <span class="hljs-number">15</span>);
+    sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>.<span class="hljs-property">left</span> = sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>.<span class="hljs-property">bottom</span> = -<span class="hljs-number">45</span>;
+    sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>.<span class="hljs-property">right</span> = sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>.<span class="hljs-property">top</span> = <span class="hljs-number">45</span>;
+    sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">camera</span>.<span class="hljs-property">far</span> = <span class="hljs-number">120</span>;
+    sun.<span class="hljs-property">shadow</span>.<span class="hljs-property">bias</span> = -<span class="hljs-number">0.0005</span>;
+    scene.<span class="hljs-title function_">add</span>(sun);
+
+    <span class="hljs-keyword">const</span> ground = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">PlaneGeometry</span>(<span class="hljs-number">400</span>, <span class="hljs-number">400</span>), <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">color</span>: <span class="hljs-number">0x1b202b</span>, <span class="hljs-attr">roughness</span>: <span class="hljs-number">1</span> }));
+    ground.<span class="hljs-property">rotation</span>.<span class="hljs-property">x</span> = -<span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> / <span class="hljs-number">2</span>;
+    ground.<span class="hljs-property">receiveShadow</span> = <span class="hljs-literal">true</span>;
+    scene.<span class="hljs-title function_">add</span>(ground);
+
+    <span class="hljs-title function_">addEventListener</span>(<span class="hljs-string">&#x27;resize&#x27;</span>, <span class="hljs-function">() =&gt;</span> {
+      camera.<span class="hljs-property">aspect</span> = innerWidth / innerHeight;
+      camera.<span class="hljs-title function_">updateProjectionMatrix</span>();
+      renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight);
+    });
+
+    <span class="hljs-comment">// Our own frame stats. renderer.info is reset at the start of every render(),</span>
+    <span class="hljs-comment">// so we copy what we need right after rendering.</span>
+    <span class="hljs-keyword">const</span> perf = { <span class="hljs-attr">fps</span>: <span class="hljs-number">0</span>, <span class="hljs-attr">frameMs</span>: <span class="hljs-number">0</span>, <span class="hljs-attr">cpuMs</span>: <span class="hljs-number">0</span>, <span class="hljs-attr">calls</span>: <span class="hljs-number">0</span>, <span class="hljs-attr">triangles</span>: <span class="hljs-number">0</span> };
+    <span class="hljs-keyword">let</span> perfFrames = <span class="hljs-number">0</span>, perfCpu = <span class="hljs-number">0</span>, perfStart = performance.<span class="hljs-title function_">now</span>();
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">timed</span>(<span class="hljs-params">work</span>) {
+      <span class="hljs-keyword">const</span> t0 = performance.<span class="hljs-title function_">now</span>();
+      <span class="hljs-title function_">work</span>();                                   <span class="hljs-comment">// our updates + renderer.render()</span>
+      perfCpu += performance.<span class="hljs-title function_">now</span>() - t0;
+      perfFrames++;
+      perf.<span class="hljs-property">calls</span> = renderer.<span class="hljs-property">info</span>.<span class="hljs-property">render</span>.<span class="hljs-property">calls</span>;
+      perf.<span class="hljs-property">triangles</span> = renderer.<span class="hljs-property">info</span>.<span class="hljs-property">render</span>.<span class="hljs-property">triangles</span>;
+      <span class="hljs-keyword">const</span> now = performance.<span class="hljs-title function_">now</span>();
+      <span class="hljs-keyword">if</span> (now - perfStart &gt;= <span class="hljs-number">500</span>) {             <span class="hljs-comment">// average over half a second</span>
+        perf.<span class="hljs-property">frameMs</span> = (now - perfStart) / perfFrames;
+        perf.<span class="hljs-property">fps</span> = <span class="hljs-number">1000</span> / perf.<span class="hljs-property">frameMs</span>;
+        perf.<span class="hljs-property">cpuMs</span> = perfCpu / perfFrames;
+        perfFrames = <span class="hljs-number">0</span>; perfCpu = <span class="hljs-number">0</span>; perfStart = now;
+        <span class="hljs-title function_">showStats</span>();
+      }
+    }
+    <span class="hljs-keyword">const</span> <span class="hljs-title function_">fmt</span> = (<span class="hljs-params">n</span>) =&gt; n &gt;= <span class="hljs-number">1e6</span> ? (n / <span class="hljs-number">1e6</span>).<span class="hljs-title function_">toFixed</span>(<span class="hljs-number">2</span>) + <span class="hljs-string">&#x27; M&#x27;</span> : n &gt;= <span class="hljs-number">1e4</span> ? (n / <span class="hljs-number">1e3</span>).<span class="hljs-title function_">toFixed</span>(<span class="hljs-number">1</span>) + <span class="hljs-string">&#x27; K&#x27;</span> : <span class="hljs-title class_">String</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">round</span>(n));
+    <span class="hljs-keyword">const</span> <span class="hljs-title function_">timing</span> = (<span class="hljs-params"></span>) =&gt; <span class="hljs-string">`frame      <span class="hljs-subst">${perf.frameMs.toFixed(<span class="hljs-number">1</span>)}</span> ms  (<span class="hljs-subst">${perf.fps.toFixed(<span class="hljs-number">0</span>)}</span> fps)\nour JS     <span class="hljs-subst">${perf.cpuMs.toFixed(<span class="hljs-number">2</span>)}</span> ms per frame`</span>;
+    <span class="hljs-comment">// ---- the field: N small objects in four shapes and six colours ----</span>
+    <span class="hljs-keyword">const</span> box = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BoxGeometry</span>(<span class="hljs-number">1</span>, <span class="hljs-number">1</span>, <span class="hljs-number">1</span>);
+    box.<span class="hljs-title function_">clearGroups</span>();
+    <span class="hljs-keyword">const</span> <span class="hljs-variable constant_">SHAPES</span> = [
+      box,                                                          <span class="hljs-comment">//  12 triangles</span>
+      <span class="hljs-title function_">mergeVertices</span>(<span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">IcosahedronGeometry</span>(<span class="hljs-number">0.62</span>, <span class="hljs-number">1</span>)),        <span class="hljs-comment">//  80 triangles</span>
+      <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">TorusGeometry</span>(<span class="hljs-number">0.42</span>, <span class="hljs-number">0.17</span>, <span class="hljs-number">10</span>, <span class="hljs-number">20</span>),                  <span class="hljs-comment">// 400 triangles</span>
+      <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">ConeGeometry</span>(<span class="hljs-number">0.55</span>, <span class="hljs-number">1.1</span>, <span class="hljs-number">16</span>),                        <span class="hljs-comment">//  48 triangles</span>
+    ];
+    <span class="hljs-keyword">const</span> <span class="hljs-variable constant_">PALETTE</span> = [<span class="hljs-number">0xff6b6b</span>, <span class="hljs-number">0xffd166</span>, <span class="hljs-number">0x06d6a0</span>, <span class="hljs-number">0x4cc9f0</span>, <span class="hljs-number">0x9b8cff</span>, <span class="hljs-number">0xf4f1ea</span>].<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">c</span>) =&gt;</span> <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Color</span>(c));
+
+    <span class="hljs-comment">// A seeded random generator, so every mode builds exactly the same field.</span>
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">random</span>(<span class="hljs-params">seed</span>) {
+      <span class="hljs-keyword">return</span> <span class="hljs-function">() =&gt;</span> {
+        seed = (seed + <span class="hljs-number">0x6d2b79f5</span>) | <span class="hljs-number">0</span>;
+        <span class="hljs-keyword">let</span> t = <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">imul</span>(seed ^ (seed &gt;&gt;&gt; <span class="hljs-number">15</span>), <span class="hljs-number">1</span> | seed);
+        t = (t + <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">imul</span>(t ^ (t &gt;&gt;&gt; <span class="hljs-number">7</span>), <span class="hljs-number">61</span> | t)) ^ t;
+        <span class="hljs-keyword">return</span> ((t ^ (t &gt;&gt;&gt; <span class="hljs-number">14</span>)) &gt;&gt;&gt; <span class="hljs-number">0</span>) / <span class="hljs-number">4294967296</span>;
+      };
+    }
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">makeItems</span>(<span class="hljs-params">count</span>) {
+      <span class="hljs-keyword">const</span> rnd = <span class="hljs-title function_">random</span>(<span class="hljs-number">7</span>), side = <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">ceil</span>(<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">sqrt</span>(count)), spacing = <span class="hljs-number">80</span> / side, items = [];
+      <span class="hljs-keyword">for</span> (<span class="hljs-keyword">let</span> i = <span class="hljs-number">0</span>; i &lt; count; i++) {
+        items.<span class="hljs-title function_">push</span>({
+          <span class="hljs-attr">shape</span>: <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">floor</span>(<span class="hljs-title function_">rnd</span>() * <span class="hljs-number">4</span>),
+          <span class="hljs-attr">color</span>: <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">floor</span>(<span class="hljs-title function_">rnd</span>() * <span class="hljs-variable constant_">PALETTE</span>.<span class="hljs-property">length</span>),
+          <span class="hljs-attr">x</span>: ((i % side) + <span class="hljs-number">0.5</span> + (<span class="hljs-title function_">rnd</span>() - <span class="hljs-number">0.5</span>) * <span class="hljs-number">0.4</span>) * spacing - <span class="hljs-number">40</span>,
+          <span class="hljs-attr">z</span>: (<span class="hljs-title class_">Math</span>.<span class="hljs-title function_">floor</span>(i / side) + <span class="hljs-number">0.5</span> + (<span class="hljs-title function_">rnd</span>() - <span class="hljs-number">0.5</span>) * <span class="hljs-number">0.4</span>) * spacing - <span class="hljs-number">40</span>,
+          <span class="hljs-attr">size</span>: spacing * (<span class="hljs-number">0.42</span> + <span class="hljs-title function_">rnd</span>() * <span class="hljs-number">0.18</span>),
+          <span class="hljs-attr">phase</span>: <span class="hljs-title function_">rnd</span>() * <span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> * <span class="hljs-number">2</span>,
+          <span class="hljs-attr">spin</span>: <span class="hljs-title function_">rnd</span>() * <span class="hljs-title class_">Math</span>.<span class="hljs-property">PI</span> * <span class="hljs-number">2</span>,
+        });
+      }
+      <span class="hljs-keyword">return</span> items;
+    }
+
+    <span class="hljs-comment">// Where item i is at time t: it bobs up and down and turns slowly.</span>
+    <span class="hljs-keyword">const</span> _p = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>(), _q = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Quaternion</span>(), _s = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Vector3</span>(), _e = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Euler</span>();
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">poseAt</span>(<span class="hljs-params">item, t</span>) {
+      _p.<span class="hljs-title function_">set</span>(item.<span class="hljs-property">x</span>, item.<span class="hljs-property">size</span> * (<span class="hljs-number">0.6</span> + <span class="hljs-number">0.6</span> * (<span class="hljs-number">1</span> + <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">sin</span>(t * <span class="hljs-number">1.6</span> + item.<span class="hljs-property">phase</span>))), item.<span class="hljs-property">z</span>);
+      _q.<span class="hljs-title function_">setFromEuler</span>(_e.<span class="hljs-title function_">set</span>(<span class="hljs-number">0.4</span>, item.<span class="hljs-property">spin</span> + t * <span class="hljs-number">0.6</span>, <span class="hljs-number">0</span>));
+      _s.<span class="hljs-title function_">setScalar</span>(item.<span class="hljs-property">size</span>);
+    }
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">matrixAt</span>(<span class="hljs-params">item, t, target</span>) {
+      <span class="hljs-title function_">poseAt</span>(item, t);
+      <span class="hljs-keyword">return</span> target.<span class="hljs-title function_">compose</span>(_p, _q, _s);
+    }
+    <span class="hljs-comment">// ---- 1. Naive: one Mesh per object ----</span>
+    <span class="hljs-comment">// Geometries and materials are shared, which saves memory, but every Mesh is still its own draw call.</span>
+    <span class="hljs-keyword">const</span> <span class="hljs-variable constant_">MATERIALS</span> = <span class="hljs-variable constant_">PALETTE</span>.<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">color</span>) =&gt;</span> <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ color, <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.5</span> }));
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">buildNaive</span>(<span class="hljs-params">items</span>) {
+      <span class="hljs-keyword">const</span> group = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Group</span>();
+      <span class="hljs-keyword">const</span> meshes = items.<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">item</span>) =&gt;</span> {
+        <span class="hljs-keyword">const</span> mesh = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(<span class="hljs-variable constant_">SHAPES</span>[item.<span class="hljs-property">shape</span>], <span class="hljs-variable constant_">MATERIALS</span>[item.<span class="hljs-property">color</span>]);
+        mesh.<span class="hljs-property">castShadow</span> = <span class="hljs-literal">true</span>;
+        group.<span class="hljs-title function_">add</span>(mesh);
+        <span class="hljs-keyword">return</span> mesh;
+      });
+      <span class="hljs-keyword">const</span> <span class="hljs-title function_">update</span> = (<span class="hljs-params">t</span>) =&gt; meshes.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">mesh, i</span>) =&gt;</span> {
+        <span class="hljs-title function_">poseAt</span>(items[i], t);
+        mesh.<span class="hljs-property">position</span>.<span class="hljs-title function_">copy</span>(_p);
+        mesh.<span class="hljs-property">quaternion</span>.<span class="hljs-title function_">copy</span>(_q);
+        mesh.<span class="hljs-property">scale</span>.<span class="hljs-title function_">copy</span>(_s);
+      });
+      <span class="hljs-title function_">update</span>(<span class="hljs-number">0</span>);
+      <span class="hljs-keyword">return</span> {
+        <span class="hljs-attr">object</span>: group,
+        update,
+        <span class="hljs-title function_">dispose</span>(<span class="hljs-params"></span>) {},                           <span class="hljs-comment">// nothing of its own: shapes and materials are shared</span>
+      };
+    }
+    <span class="hljs-comment">// ---- 2. Merged: bake every object into one big geometry ----</span>
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">buildMerged</span>(<span class="hljs-params">items</span>) {
+      <span class="hljs-keyword">const</span> matrix = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Matrix4</span>();
+      <span class="hljs-keyword">const</span> parts = items.<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">item</span>) =&gt;</span> {
+        <span class="hljs-keyword">const</span> part = <span class="hljs-variable constant_">SHAPES</span>[item.<span class="hljs-property">shape</span>].<span class="hljs-title function_">clone</span>().<span class="hljs-title function_">applyMatrix4</span>(<span class="hljs-title function_">matrixAt</span>(item, <span class="hljs-number">0</span>, matrix));
+        <span class="hljs-keyword">const</span> colors = <span class="hljs-keyword">new</span> <span class="hljs-title class_">Float32Array</span>(part.<span class="hljs-property">attributes</span>.<span class="hljs-property">position</span>.<span class="hljs-property">count</span> * <span class="hljs-number">3</span>);
+        <span class="hljs-keyword">for</span> (<span class="hljs-keyword">let</span> v = <span class="hljs-number">0</span>; v &lt; colors.<span class="hljs-property">length</span>; v += <span class="hljs-number">3</span>) <span class="hljs-variable constant_">PALETTE</span>[item.<span class="hljs-property">color</span>].<span class="hljs-title function_">toArray</span>(colors, v);
+        part.<span class="hljs-title function_">setAttribute</span>(<span class="hljs-string">&#x27;color&#x27;</span>, <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BufferAttribute</span>(colors, <span class="hljs-number">3</span>));
+        <span class="hljs-keyword">return</span> part;
+      });
+      <span class="hljs-keyword">const</span> geometry = <span class="hljs-title function_">mergeGeometries</span>(parts);
+      parts.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">part</span>) =&gt;</span> part.<span class="hljs-title function_">dispose</span>());
+      <span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">vertexColors</span>: <span class="hljs-literal">true</span>, <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.5</span> });
+      <span class="hljs-keyword">const</span> mesh = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Mesh</span>(geometry, material);
+      mesh.<span class="hljs-property">castShadow</span> = <span class="hljs-literal">true</span>;
+      <span class="hljs-keyword">return</span> {
+        <span class="hljs-attr">object</span>: mesh,
+        <span class="hljs-title function_">update</span>(<span class="hljs-params"></span>) {},                            <span class="hljs-comment">// frozen: the objects are now just triangles in one mesh</span>
+        <span class="hljs-title function_">dispose</span>(<span class="hljs-params"></span>) { geometry.<span class="hljs-title function_">dispose</span>(); material.<span class="hljs-title function_">dispose</span>(); },
+      };
+    }
+    <span class="hljs-comment">// ---- 3. InstancedMesh: one geometry, drawn many times with different matrices ----</span>
+    <span class="hljs-comment">// One InstancedMesh can only use one geometry, so we need one per shape: 4 draw calls.</span>
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">buildInstanced</span>(<span class="hljs-params">items</span>) {
+      <span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.5</span> });
+      <span class="hljs-keyword">const</span> group = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Group</span>(), meshes = [];
+      <span class="hljs-keyword">const</span> matrix = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Matrix4</span>();
+      <span class="hljs-variable constant_">SHAPES</span>.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">shape, s</span>) =&gt;</span> {
+        <span class="hljs-keyword">const</span> mine = items.<span class="hljs-title function_">filter</span>(<span class="hljs-function">(<span class="hljs-params">item</span>) =&gt;</span> item.<span class="hljs-property">shape</span> === s);
+        <span class="hljs-keyword">const</span> mesh = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">InstancedMesh</span>(shape, material, mine.<span class="hljs-property">length</span>);
+        mesh.<span class="hljs-property">instanceMatrix</span>.<span class="hljs-title function_">setUsage</span>(<span class="hljs-variable constant_">THREE</span>.<span class="hljs-property">DynamicDrawUsage</span>);   <span class="hljs-comment">// we rewrite it every frame</span>
+        mine.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">item, i</span>) =&gt;</span> {
+          mesh.<span class="hljs-title function_">setMatrixAt</span>(i, <span class="hljs-title function_">matrixAt</span>(item, <span class="hljs-number">0</span>, matrix));
+          mesh.<span class="hljs-title function_">setColorAt</span>(i, <span class="hljs-variable constant_">PALETTE</span>[item.<span class="hljs-property">color</span>]);
+        });
+        mesh.<span class="hljs-title function_">computeBoundingSphere</span>();           <span class="hljs-comment">// culling uses this; it is not updated for you</span>
+        mesh.<span class="hljs-property">castShadow</span> = <span class="hljs-literal">true</span>;
+        meshes.<span class="hljs-title function_">push</span>({ mesh, mine });
+        group.<span class="hljs-title function_">add</span>(mesh);
+      });
+      <span class="hljs-keyword">return</span> {
+        <span class="hljs-attr">object</span>: group,
+        <span class="hljs-title function_">update</span>(<span class="hljs-params">t</span>) {
+          <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> { mesh, mine } <span class="hljs-keyword">of</span> meshes) {
+            mine.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">item, i</span>) =&gt;</span> mesh.<span class="hljs-title function_">setMatrixAt</span>(i, <span class="hljs-title function_">matrixAt</span>(item, t, matrix)));
+            mesh.<span class="hljs-property">instanceMatrix</span>.<span class="hljs-property">needsUpdate</span> = <span class="hljs-literal">true</span>;
+          }
+        },
+        <span class="hljs-title function_">dispose</span>(<span class="hljs-params"></span>) { meshes.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">{ mesh }</span>) =&gt;</span> mesh.<span class="hljs-title function_">dispose</span>()); material.<span class="hljs-title function_">dispose</span>(); },
+      };
+    }
+    <span class="hljs-comment">// ---- 4. BatchedMesh: several geometries in one object, one draw call ----</span>
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">buildBatched</span>(<span class="hljs-params">items</span>) {
+      <span class="hljs-keyword">let</span> vertices = <span class="hljs-number">0</span>, indices = <span class="hljs-number">0</span>;
+      <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> shape <span class="hljs-keyword">of</span> <span class="hljs-variable constant_">SHAPES</span>) { vertices += shape.<span class="hljs-property">attributes</span>.<span class="hljs-property">position</span>.<span class="hljs-property">count</span>; indices += shape.<span class="hljs-property">index</span>.<span class="hljs-property">count</span>; }
+      <span class="hljs-keyword">const</span> material = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">MeshStandardMaterial</span>({ <span class="hljs-attr">roughness</span>: <span class="hljs-number">0.5</span> });
+      <span class="hljs-keyword">const</span> batch = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">BatchedMesh</span>(items.<span class="hljs-property">length</span>, vertices, indices, material);
+      <span class="hljs-keyword">const</span> geometryIds = <span class="hljs-variable constant_">SHAPES</span>.<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">shape</span>) =&gt;</span> batch.<span class="hljs-title function_">addGeometry</span>(shape));   <span class="hljs-comment">// each shape stored once</span>
+      <span class="hljs-keyword">const</span> matrix = <span class="hljs-keyword">new</span> <span class="hljs-variable constant_">THREE</span>.<span class="hljs-title class_">Matrix4</span>();
+      <span class="hljs-keyword">const</span> ids = items.<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">item</span>) =&gt;</span> {
+        <span class="hljs-keyword">const</span> id = batch.<span class="hljs-title function_">addInstance</span>(geometryIds[item.<span class="hljs-property">shape</span>]);
+        batch.<span class="hljs-title function_">setMatrixAt</span>(id, <span class="hljs-title function_">matrixAt</span>(item, <span class="hljs-number">0</span>, matrix));
+        batch.<span class="hljs-title function_">setColorAt</span>(id, <span class="hljs-variable constant_">PALETTE</span>[item.<span class="hljs-property">color</span>]);
+        <span class="hljs-keyword">return</span> id;
+      });
+      batch.<span class="hljs-property">castShadow</span> = <span class="hljs-literal">true</span>;
+      <span class="hljs-keyword">return</span> {
+        <span class="hljs-attr">object</span>: batch,
+        <span class="hljs-title function_">update</span>(<span class="hljs-params">t</span>) { items.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">item, i</span>) =&gt;</span> batch.<span class="hljs-title function_">setMatrixAt</span>(ids[i], <span class="hljs-title function_">matrixAt</span>(item, t, matrix))); },
+        <span class="hljs-title function_">dispose</span>(<span class="hljs-params"></span>) { batch.<span class="hljs-title function_">dispose</span>(); material.<span class="hljs-title function_">dispose</span>(); },
+      };
+    }
+    <span class="hljs-comment">// ---- the stress test ----</span>
+    <span class="hljs-keyword">const</span> <span class="hljs-variable constant_">BUILDERS</span> = { <span class="hljs-attr">naive</span>: buildNaive, <span class="hljs-attr">merged</span>: buildMerged, <span class="hljs-attr">instanced</span>: buildInstanced, <span class="hljs-attr">batched</span>: buildBatched };
+    <span class="hljs-keyword">const</span> params = {
+      <span class="hljs-attr">mode</span>: <span class="hljs-string">&#x27;instanced&#x27;</span>, <span class="hljs-attr">objects</span>: <span class="hljs-number">5000</span>, <span class="hljs-attr">animate</span>: <span class="hljs-literal">true</span>,
+      <span class="hljs-attr">shadows</span>: <span class="hljs-literal">false</span>, <span class="hljs-attr">pixelRatio</span>: renderer.<span class="hljs-title function_">getPixelRatio</span>(), <span class="hljs-attr">perObjectCulling</span>: <span class="hljs-literal">true</span>,
+      <span class="hljs-attr">benchmark</span>: <span class="hljs-function">() =&gt;</span> <span class="hljs-title function_">runBenchmark</span>(),
+    };
+    <span class="hljs-keyword">let</span> field = <span class="hljs-literal">null</span>, buildMs = <span class="hljs-number">0</span>, bench = <span class="hljs-literal">null</span>, benchRunning = <span class="hljs-literal">false</span>;
+
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">rebuild</span>(<span class="hljs-params"></span>) {
+      <span class="hljs-keyword">if</span> (field) { scene.<span class="hljs-title function_">remove</span>(field.<span class="hljs-property">object</span>); field.<span class="hljs-title function_">dispose</span>(); }
+      <span class="hljs-keyword">const</span> t0 = performance.<span class="hljs-title function_">now</span>();
+      field = <span class="hljs-variable constant_">BUILDERS</span>[params.<span class="hljs-property">mode</span>](<span class="hljs-title function_">makeItems</span>(params.<span class="hljs-property">objects</span>));
+      buildMs = performance.<span class="hljs-title function_">now</span>() - t0;
+      <span class="hljs-keyword">if</span> (field.<span class="hljs-property">object</span>.<span class="hljs-property">isBatchedMesh</span>) field.<span class="hljs-property">object</span>.<span class="hljs-property">perObjectFrustumCulled</span> = params.<span class="hljs-property">perObjectCulling</span>;
+      scene.<span class="hljs-title function_">add</span>(field.<span class="hljs-property">object</span>);
+    }
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">applyShadows</span>(<span class="hljs-params"></span>) {
+      renderer.<span class="hljs-property">shadowMap</span>.<span class="hljs-property">enabled</span> = sun.<span class="hljs-property">castShadow</span> = params.<span class="hljs-property">shadows</span>;
+      scene.<span class="hljs-title function_">traverse</span>(<span class="hljs-function">(<span class="hljs-params">o</span>) =&gt;</span> { <span class="hljs-keyword">if</span> (o.<span class="hljs-property">material</span>) o.<span class="hljs-property">material</span>.<span class="hljs-property">needsUpdate</span> = <span class="hljs-literal">true</span>; });
+      <span class="hljs-variable constant_">MATERIALS</span>.<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">m</span>) =&gt;</span> m.<span class="hljs-property">needsUpdate</span> = <span class="hljs-literal">true</span>);   <span class="hljs-comment">// shared materials of the naive mode, even when not in the scene</span>
+    }
+
+    <span class="hljs-keyword">const</span> stats = <span class="hljs-keyword">new</span> <span class="hljs-title class_">Stats</span>();
+    <span class="hljs-title class_">Object</span>.<span class="hljs-title function_">assign</span>(stats.<span class="hljs-property">dom</span>.<span class="hljs-property">style</span>, { <span class="hljs-attr">left</span>: <span class="hljs-string">&#x27;auto&#x27;</span>, <span class="hljs-attr">top</span>: <span class="hljs-string">&#x27;auto&#x27;</span>, <span class="hljs-attr">right</span>: <span class="hljs-string">&#x27;12px&#x27;</span>, <span class="hljs-attr">bottom</span>: <span class="hljs-string">&#x27;12px&#x27;</span> });
+    <span class="hljs-variable language_">document</span>.<span class="hljs-property">body</span>.<span class="hljs-title function_">appendChild</span>(stats.<span class="hljs-property">dom</span>);
+
+    <span class="hljs-keyword">function</span> <span class="hljs-title function_">showStats</span>(<span class="hljs-params"></span>) {
+      <span class="hljs-keyword">let</span> text =
+        <span class="hljs-string">`&lt;b&gt;<span class="hljs-subst">${params.mode}</span>&lt;/b&gt;, <span class="hljs-subst">${params.objects.toLocaleString(<span class="hljs-string">&#x27;en-US&#x27;</span>)}</span> objects<span class="hljs-subst">${params.shadows ? <span class="hljs-string">&#x27;, sun shadows&#x27;</span> : <span class="hljs-string">&#x27;&#x27;</span>}</span>\n`</span> +
+        <span class="hljs-string">`draw calls <span class="hljs-subst">${perf.calls}</span>\n`</span> +
+        <span class="hljs-string">`triangles  <span class="hljs-subst">${fmt(perf.triangles)}</span>\n`</span> +
+        <span class="hljs-string">`geometries <span class="hljs-subst">${renderer.info.memory.geometries}</span>\n`</span> +
+        <span class="hljs-string">`built in   <span class="hljs-subst">${buildMs.toFixed(<span class="hljs-number">0</span>)}</span> ms\n`</span> +
+        (params.<span class="hljs-property">mode</span> === <span class="hljs-string">&#x27;merged&#x27;</span> ? <span class="hljs-string">`&lt;b&gt;merged:&lt;/b&gt; one mesh cannot move its parts\n`</span> : <span class="hljs-string">&#x27;&#x27;</span>) +
+        <span class="hljs-string">`\n`</span> + <span class="hljs-title function_">timing</span>();
+      <span class="hljs-keyword">if</span> (bench) {
+        text += <span class="hljs-string">`\n\n&lt;b&gt;benchmark&lt;/b&gt;, <span class="hljs-subst">${bench.objects.toLocaleString(<span class="hljs-string">&#x27;en-US&#x27;</span>)}</span> objects<span class="hljs-subst">${benchRunning ? <span class="hljs-string">&#x27; (running…)&#x27;</span> : <span class="hljs-string">&#x27;&#x27;</span>}</span>\n`</span> +
+          <span class="hljs-string">`mode        calls   frame ms   our JS ms\n`</span> +
+          bench.<span class="hljs-property">rows</span>.<span class="hljs-title function_">map</span>(<span class="hljs-function">(<span class="hljs-params">r</span>) =&gt;</span> <span class="hljs-string">`<span class="hljs-subst">${r.mode.padEnd(<span class="hljs-number">10</span>)}</span> <span class="hljs-subst">${<span class="hljs-built_in">String</span>(r.calls).padStart(<span class="hljs-number">6</span>)}</span> <span class="hljs-subst">${r.frameMs.toFixed(<span class="hljs-number">1</span>).padStart(<span class="hljs-number">10</span>)}</span> <span class="hljs-subst">${r.cpuMs.toFixed(<span class="hljs-number">2</span>).padStart(<span class="hljs-number">11</span>)}</span>`</span>).<span class="hljs-title function_">join</span>(<span class="hljs-string">&#x27;\n&#x27;</span>);
+      }
+      status.<span class="hljs-property">innerHTML</span> = text;
+    }
+
+    <span class="hljs-comment">// Run each mode for a moment and keep the averages.</span>
+    <span class="hljs-keyword">const</span> <span class="hljs-title function_">wait</span> = (<span class="hljs-params">ms</span>) =&gt; <span class="hljs-keyword">new</span> <span class="hljs-title class_">Promise</span>(<span class="hljs-function">(<span class="hljs-params">resolve</span>) =&gt;</span> <span class="hljs-built_in">setTimeout</span>(resolve, ms));
+    <span class="hljs-keyword">async</span> <span class="hljs-keyword">function</span> <span class="hljs-title function_">runBenchmark</span>(<span class="hljs-params"></span>) {
+      <span class="hljs-keyword">if</span> (benchRunning) <span class="hljs-keyword">return</span>;
+      benchRunning = <span class="hljs-literal">true</span>;
+      <span class="hljs-keyword">const</span> before = params.<span class="hljs-property">mode</span>;
+      bench = { <span class="hljs-attr">objects</span>: params.<span class="hljs-property">objects</span>, <span class="hljs-attr">rows</span>: [] };
+      <span class="hljs-keyword">for</span> (<span class="hljs-keyword">const</span> mode <span class="hljs-keyword">of</span> <span class="hljs-title class_">Object</span>.<span class="hljs-title function_">keys</span>(<span class="hljs-variable constant_">BUILDERS</span>)) {
+        params.<span class="hljs-property">mode</span> = mode;
+        gui.<span class="hljs-title function_">controllersRecursive</span>().<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">c</span>) =&gt;</span> c.<span class="hljs-title function_">updateDisplay</span>());
+        <span class="hljs-title function_">rebuild</span>();
+        <span class="hljs-keyword">await</span> <span class="hljs-title function_">wait</span>(<span class="hljs-number">1200</span>);                       <span class="hljs-comment">// warm up: upload buffers, compile shaders</span>
+        bench.<span class="hljs-property">rows</span>.<span class="hljs-title function_">push</span>({ mode, <span class="hljs-attr">calls</span>: perf.<span class="hljs-property">calls</span>, <span class="hljs-attr">frameMs</span>: perf.<span class="hljs-property">frameMs</span>, <span class="hljs-attr">cpuMs</span>: perf.<span class="hljs-property">cpuMs</span> });
+      }
+      params.<span class="hljs-property">mode</span> = before;
+      gui.<span class="hljs-title function_">controllersRecursive</span>().<span class="hljs-title function_">forEach</span>(<span class="hljs-function">(<span class="hljs-params">c</span>) =&gt;</span> c.<span class="hljs-title function_">updateDisplay</span>());
+      <span class="hljs-title function_">rebuild</span>();
+      benchRunning = <span class="hljs-literal">false</span>;
+      <span class="hljs-title function_">showStats</span>();
+    }
+
+    <span class="hljs-keyword">const</span> gui = <span class="hljs-keyword">new</span> <span class="hljs-title function_">GUI</span>({ <span class="hljs-attr">title</span>: <span class="hljs-string">&#x27;Stress test&#x27;</span> });
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;mode&#x27;</span>, <span class="hljs-title class_">Object</span>.<span class="hljs-title function_">keys</span>(<span class="hljs-variable constant_">BUILDERS</span>)).<span class="hljs-title function_">onChange</span>(rebuild);
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;objects&#x27;</span>, [<span class="hljs-number">1000</span>, <span class="hljs-number">2000</span>, <span class="hljs-number">5000</span>, <span class="hljs-number">10000</span>, <span class="hljs-number">20000</span>, <span class="hljs-number">50000</span>]).<span class="hljs-title function_">onChange</span>(rebuild);
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;animate&#x27;</span>);
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;shadows&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;sun shadows&#x27;</span>).<span class="hljs-title function_">onChange</span>(applyShadows);
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;pixelRatio&#x27;</span>, <span class="hljs-number">0.25</span>, <span class="hljs-number">2</span>, <span class="hljs-number">0.25</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;pixel ratio&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">(<span class="hljs-params">v</span>) =&gt;</span> { renderer.<span class="hljs-title function_">setPixelRatio</span>(v); renderer.<span class="hljs-title function_">setSize</span>(innerWidth, innerHeight); });
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;perObjectCulling&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;batched: per-object culling&#x27;</span>).<span class="hljs-title function_">onChange</span>(<span class="hljs-function">() =&gt;</span> {
+      <span class="hljs-keyword">if</span> (field.<span class="hljs-property">object</span>.<span class="hljs-property">isBatchedMesh</span>) field.<span class="hljs-property">object</span>.<span class="hljs-property">perObjectFrustumCulled</span> = params.<span class="hljs-property">perObjectCulling</span>;
+    });
+    gui.<span class="hljs-title function_">add</span>(params, <span class="hljs-string">&#x27;benchmark&#x27;</span>).<span class="hljs-title function_">name</span>(<span class="hljs-string">&#x27;benchmark all modes&#x27;</span>);
+    <span class="hljs-title function_">rebuild</span>();
+
+    <span class="hljs-keyword">let</span> t = <span class="hljs-number">0</span>, last = <span class="hljs-number">0</span>;
+    renderer.<span class="hljs-title function_">setAnimationLoop</span>(<span class="hljs-function">(<span class="hljs-params">time</span>) =&gt;</span> {
+      <span class="hljs-keyword">const</span> dt = <span class="hljs-title class_">Math</span>.<span class="hljs-title function_">min</span>((time - last) / <span class="hljs-number">1000</span>, <span class="hljs-number">0.1</span>);
+      last = time;
+      <span class="hljs-keyword">if</span> (params.<span class="hljs-property">animate</span>) t += dt;
+      controls.<span class="hljs-title function_">update</span>();
+      <span class="hljs-title function_">timed</span>(<span class="hljs-function">() =&gt;</span> {
+        <span class="hljs-keyword">if</span> (params.<span class="hljs-property">animate</span>) field.<span class="hljs-title function_">update</span>(t);
+        renderer.<span class="hljs-title function_">render</span>(scene, camera);
+      });
+      stats.<span class="hljs-title function_">update</span>();
+    });
+  </span><span class="hljs-tag">&lt;/<span class="hljs-name">script</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">body</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-name">html</span>&gt;</span>
+</code></pre>
+<p>The step-by-step versions are in the repo too: <a href="/3d-tutorial/demos/part-7/step-1.html">step-1.html</a> (<code>renderer.info</code>, stats.js and our own timer), <a href="/3d-tutorial/demos/part-7/step-2.html">step-2.html</a> (naive meshes and merging), <a href="/3d-tutorial/demos/part-7/step-3.html">step-3.html</a> (plus <code>InstancedMesh</code>), <a href="/3d-tutorial/demos/part-7/step-4.html">step-4.html</a> (plus <code>BatchedMesh</code>, with per-object culling and sorting), <a href="/3d-tutorial/demos/part-7/step-5.html">step-5.html</a> (<code>LOD</code> and frustum culling), <a href="/3d-tutorial/demos/part-7/step-6.html">step-6.html</a> (pixel ratio, textures, mipmaps and shadow cost) and <a href="/3d-tutorial/demos/part-7/step-7.html">step-7.html</a> (<code>dispose()</code> and rendering on demand).</p>
+<h2>A few things to try</h2>
+<ul>
+<li>In the stress test, find the object count where naive mode drops below 60 fps on your machine. Then switch to batched and keep doubling until it drops too.</li>
+<li>Move the pixel ratio slider in naive mode and in batched mode. In which one does it change the frame time more? That tells you which one is CPU-bound.</li>
+<li>In step 3, set <code>mesh.count = 100</code> on each <code>InstancedMesh</code> in <code>update()</code>: the rest disappear without reallocating anything.</li>
+<li>In step 4, use <code>batch.setVisibleAt(id, false)</code> to hide every second object, and <code>setGeometryIdAt</code> to turn all the tori into boxes.</li>
+<li>In step 5, change the LOD distances to 6 and 12 with tint on, and watch the colour bands move toward the camera. How close can they come before you see the switch without the tint?</li>
+<li>In step 6, set <code>renderer.shadowMap.autoUpdate = false</code> with the sun shadow on and the animation running: the shadows freeze where they were.</li>
+<li>In step 7, open Chrome's Task Manager (Shift+Esc) and compare the GPU memory of the tab with dispose on and off.</li>
+<li>Record the stress test with Chrome DevTools in naive mode, then in batched mode, and compare the Main track.</li>
+</ul>
+<h2>Next time</h2>
+<p>We can now measure a frame and make it cheaper: fewer draw calls with merging, instancing and batching, fewer triangles with LOD and culling, fewer pixels, smaller textures, fewer shadow passes, no leaks and no wasted frames. So far, though, users could only orbit the camera. In Part 8 we make scenes <strong>interactive and physical</strong>: picking objects with the mouse using <code>Raycaster</code> (including instances of an <code>InstancedMesh</code>), dragging them around, and adding a physics engine, Rapier, so that thousands of instanced objects fall, collide and stack. See you there.</p>
+</div>
+  <nav class="pager"><a href="/3d-tutorial/part-6-post-processing/">← Part 6: Post-Processing and Bloom</a><span class="soon-next">Next: Part 8, Interaction and Physics (coming soon)</span></nav>
+  <aside class="support" aria-label="Support the series">
+  <p>This series is free. If it helped you, you can support it with a coffee.</p>
+  <div class="support-links"><a class="support-img" href="https://www.buymeacoffee.com/iodiot" target="_blank" rel="noopener" title="Buy Me a Coffee"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height:50px;width:181px" loading="lazy"></a></div>
+</aside>
+</article>
+</main>
+<footer class="foot"><p>© Mike Smahin · <a href="https://github.com/iodiot/3d-tutorial" target="_blank" rel="noopener">source on GitHub</a></p></footer>
+<script data-goatcounter="https://iodiot.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

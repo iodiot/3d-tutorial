@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Part 7 · Step 5 · LOD and frustum culling</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d1017; overflow: hidden; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+    .panel b { color: #ffd166; font-weight: 600; }
+    .hint { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 120px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; pointer-events: none; background: rgba(13, 16, 23, .75); padding: 2px 7px; border-radius: 5px; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel">Starting…</div>
+  <div class="hint">Drag to orbit, scroll to zoom · tint the levels, then turn LOD and culling off and watch the triangles</div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const status = document.getElementById('status');
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d1017);
+    scene.fog = new THREE.Fog(0x0d1017, 70, 160);
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.5, 400);
+    camera.position.set(0, 26, 52);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 0, 4);
+
+    scene.add(new THREE.HemisphereLight(0xc4d6ff, 0x2a2420, 1.6));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+    sun.position.set(30, 40, 15);
+    sun.shadow.camera.left = sun.shadow.camera.bottom = -45;
+    sun.shadow.camera.right = sun.shadow.camera.top = 45;
+    sun.shadow.camera.far = 120;
+    sun.shadow.bias = -0.0005;
+    scene.add(sun);
+
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x1b202b, roughness: 1 }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    // Our own frame stats. renderer.info is reset at the start of every render(),
+    // so we copy what we need right after rendering.
+    const perf = { fps: 0, frameMs: 0, cpuMs: 0, calls: 0, triangles: 0 };
+    let perfFrames = 0, perfCpu = 0, perfStart = performance.now();
+    function timed(work) {
+      const t0 = performance.now();
+      work();                                   // our updates + renderer.render()
+      perfCpu += performance.now() - t0;
+      perfFrames++;
+      perf.calls = renderer.info.render.calls;
+      perf.triangles = renderer.info.render.triangles;
+      const now = performance.now();
+      if (now - perfStart >= 500) {             // average over half a second
+        perf.frameMs = (now - perfStart) / perfFrames;
+        perf.fps = 1000 / perf.frameMs;
+        perf.cpuMs = perfCpu / perfFrames;
+        perfFrames = 0; perfCpu = 0; perfStart = now;
+        showStats();
+      }
+    }
+    const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + ' M' : n >= 1e4 ? (n / 1e3).toFixed(1) + ' K' : String(Math.round(n));
+    const timing = () => `frame      ${perf.frameMs.toFixed(1)} ms  (${perf.fps.toFixed(0)} fps)\nour JS     ${perf.cpuMs.toFixed(2)} ms per frame`;
+    camera.position.set(-30, 5, 34);
+    controls.target.set(0, 2, 10);
+
+    // Three versions of the same sphere. Triangle counts: 20 × (detail + 1)².
+    const LEVELS = [
+      { geometry: new THREE.IcosahedronGeometry(1, 20), distance: 0,  tint: 0xff6b6b },   // 8,820 triangles
+      { geometry: new THREE.IcosahedronGeometry(1, 5),  distance: 18, tint: 0xffd166 },   //   720 triangles
+      { geometry: new THREE.IcosahedronGeometry(1, 1),  distance: 45, tint: 0x4cc9f0 },   //    80 triangles
+    ];
+    const plain = new THREE.MeshStandardMaterial({ color: 0xd9dde6, roughness: 0.35, metalness: 0.1 });
+    LEVELS.forEach((level) => level.material = new THREE.MeshStandardMaterial({ color: level.tint, roughness: 0.35 }));
+
+    // A 30 × 30 grid of spheres, each one a THREE.LOD with three levels.
+    const lods = [];
+    for (let i = 0; i < 900; i++) {
+      const lod = new THREE.LOD();
+      for (const level of LEVELS) {
+        const mesh = new THREE.Mesh(level.geometry, plain);
+        // hysteresis 0.1: switch back only 10% past the distance, so objects on the line do not flicker
+        lod.addLevel(mesh, level.distance, 0.1);
+      }
+      lod.position.set((i % 30) * 4 - 58, 1.2, Math.floor(i / 30) * 4 - 58);
+      scene.add(lod);
+      lods.push(lod);
+    }
+
+    const params = { lod: true, culling: true, tint: false };
+    function applyLod() {
+      for (const lod of lods) {
+        lod.autoUpdate = params.lod;            // the renderer calls lod.update(camera) each frame
+        if (!params.lod) lod.levels.forEach((level, i) => level.object.visible = i === 0);
+      }
+    }
+    function applyCulling() {
+      for (const lod of lods) lod.levels.forEach((level) => level.object.frustumCulled = params.culling);
+    }
+    function applyTint() {
+      for (const lod of lods) lod.levels.forEach((level, i) => level.object.material = params.tint ? LEVELS[i].material : plain);
+    }
+
+    function showStats() {
+      const used = [0, 0, 0];
+      for (const lod of lods) used[lod.getCurrentLevel()]++;
+      status.innerHTML =
+        `<b>900 spheres</b>, LOD ${params.lod ? 'on' : 'off'}, frustum culling ${params.culling ? 'on' : 'off'}\n` +
+        `draw calls ${perf.calls}\n` +
+        `triangles  ${fmt(perf.triangles)}\n` +
+        (params.lod ? `levels     ${used[0]} high · ${used[1]} medium · ${used[2]} low\n` : `levels     all 900 at 8,820 triangles\n`) +
+        `\n` + timing();
+    }
+
+    const gui = new GUI({ title: 'Step 5' });
+    gui.add(params, 'lod').name('LOD').onChange(applyLod);
+    gui.add(params, 'culling').name('frustum culling').onChange(applyCulling);
+    gui.add(params, 'tint').name('tint by level').onChange(applyTint);
+
+    renderer.setAnimationLoop(() => {
+      controls.update();
+      timed(() => renderer.render(scene, camera));
+    });
+  </script>
+</body>
+</html>

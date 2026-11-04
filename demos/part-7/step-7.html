@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Part 7 · Step 7 · Render on demand, and dispose</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d1017; overflow: hidden; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+    .panel b { color: #ffd166; font-weight: 600; }
+    .hint { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 120px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; pointer-events: none; background: rgba(13, 16, 23, .75); padding: 2px 7px; border-radius: 5px; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel">Starting…</div>
+  <div class="hint">Leave the mouse alone and watch "frames drawn" drop to 0 · load levels with and without dispose</div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const status = document.getElementById('status');
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d1017);
+    scene.fog = new THREE.Fog(0x0d1017, 70, 160);
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.5, 400);
+    camera.position.set(0, 26, 52);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 0, 4);
+
+    scene.add(new THREE.HemisphereLight(0xc4d6ff, 0x2a2420, 1.6));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+    sun.position.set(30, 40, 15);
+    sun.shadow.camera.left = sun.shadow.camera.bottom = -45;
+    sun.shadow.camera.right = sun.shadow.camera.top = 45;
+    sun.shadow.camera.far = 120;
+    sun.shadow.bias = -0.0005;
+    scene.add(sun);
+
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x1b202b, roughness: 1 }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    // Our own frame stats. renderer.info is reset at the start of every render(),
+    // so we copy what we need right after rendering.
+    const perf = { fps: 0, frameMs: 0, cpuMs: 0, calls: 0, triangles: 0 };
+    let perfFrames = 0, perfCpu = 0, perfStart = performance.now();
+    function timed(work) {
+      const t0 = performance.now();
+      work();                                   // our updates + renderer.render()
+      perfCpu += performance.now() - t0;
+      perfFrames++;
+      perf.calls = renderer.info.render.calls;
+      perf.triangles = renderer.info.render.triangles;
+      const now = performance.now();
+      if (now - perfStart >= 500) {             // average over half a second
+        perf.frameMs = (now - perfStart) / perfFrames;
+        perf.fps = 1000 / perf.frameMs;
+        perf.cpuMs = perfCpu / perfFrames;
+        perfFrames = 0; perfCpu = 0; perfStart = now;
+        showStats();
+      }
+    }
+    const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + ' M' : n >= 1e4 ? (n / 1e3).toFixed(1) + ' K' : String(Math.round(n));
+    const timing = () => `frame      ${perf.frameMs.toFixed(1)} ms  (${perf.fps.toFixed(0)} fps)\nour JS     ${perf.cpuMs.toFixed(2)} ms per frame`;
+    camera.position.set(4, 8, 19);
+    controls.target.set(0, 1.4, 0);
+
+    // ---- a "level": 60 crates, each with its own geometry, texture and material ----
+    // (deliberately wasteful, so that forgetting to free them shows up quickly)
+    function makeLabel(text, hue) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 128;
+      const g = canvas.getContext('2d');
+      g.fillStyle = `hsl(${hue} 60% 45%)`; g.fillRect(0, 0, 128, 128);
+      g.fillStyle = '#fff'; g.font = 'bold 56px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(text, 64, 68);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      return texture;
+    }
+    let levelNumber = 0, level = null;
+    function loadLevel() {
+      if (level) {
+        scene.remove(level);
+        if (params.dispose) disposeTree(level);  // without this, the GPU copies stay behind
+      }
+      levelNumber++;
+      level = new THREE.Group();
+      for (let i = 0; i < 60; i++) {
+        const geometry = new THREE.BoxGeometry(1.6, 1.6, 1.6);
+        const material = new THREE.MeshStandardMaterial({ map: makeLabel(String(levelNumber % 100), (levelNumber * 47 + i * 3) % 360), roughness: 0.6 });
+        const crate = new THREE.Mesh(geometry, material);
+        crate.position.set((i % 10) * 2 - 9, 0.8 + Math.floor(i / 30) * 1.6, (Math.floor(i / 10) % 3) * 2 - 2);
+        crate.rotation.y = ((i * 0.37) % 0.3) - 0.15;
+        level.add(crate);
+      }
+      scene.add(level);
+      requestRender();
+    }
+
+    // scene.remove() only takes an object out of the scene graph. The GPU buffers and
+    // textures three.js made for it stay until you call dispose() on each one.
+    function disposeTree(root) {
+      root.traverse((object) => {
+        if (!object.isMesh) return;
+        object.geometry.dispose();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) {
+          for (const value of Object.values(material)) if (value?.isTexture) value.dispose();
+          material.dispose();
+        }
+      });
+    }
+
+    // ---- render on demand: only draw when something changed ----
+    let needsRender = true, drawn = 0, drawnLastSecond = 0, secondStart = performance.now();
+    function requestRender() { needsRender = true; }
+    controls.addEventListener('change', requestRender);   // fires while you drag, and while damping settles
+    addEventListener('resize', requestRender);
+
+    const params = { onDemand: true, dispose: true, load: loadLevel, load20() { pending += 20; } };
+    let pending = 0;   // levels still to load, one per frame (so each one really reaches the GPU)
+    loadLevel();
+
+    function showStats() {
+      const { geometries, textures } = renderer.info.memory;
+      status.innerHTML =
+        `<b>${params.onDemand ? 'render on demand' : 'render every frame'}</b>\n` +
+        `frames drawn  ${drawnLastSecond} in the last second\n\n` +
+        `<b>level ${levelNumber}</b> (60 crates)  dispose ${params.dispose ? 'on' : '<b>off</b>'}\n` +
+        `geometries on the GPU  ${geometries}\n` +
+        `textures on the GPU    ${textures}\n` +
+        `shader programs        ${renderer.info.programs.length}`;
+    }
+    setInterval(() => { drawnLastSecond = drawn; drawn = 0; showStats(); }, 1000);
+
+    const gui = new GUI({ title: 'Step 7' });
+    gui.add(params, 'onDemand').name('render on demand').onChange(requestRender);
+    gui.add(params, 'dispose').name('dispose old level');
+    gui.add(params, 'load').name('load a new level');
+    gui.add(params, 'load20').name('load 20 levels');
+
+    renderer.setAnimationLoop(() => {
+      controls.update();                         // cheap; with damping it keeps firing 'change' for a moment
+      if (pending > 0) { pending--; loadLevel(); }
+      if (params.onDemand && !needsRender) return;
+      needsRender = false;
+      renderer.render(scene, camera);
+      drawn++;
+    });
+  </script>
+</body>
+</html>

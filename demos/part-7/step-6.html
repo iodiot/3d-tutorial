@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Part 7 · Step 6 · Budgets: pixels, textures and shadows</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d1017; overflow: hidden; }
+    canvas { display: block; }
+    .panel { position: absolute; left: 12px; top: 12px; max-width: calc(100% - 48px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #e7eaf0; background: rgba(18, 21, 29, .85); border: 1px solid #3a4258; border-radius: 8px; padding: 8px 11px; white-space: pre; overflow: hidden; }
+    .panel b { color: #ffd166; font-weight: 600; }
+    .hint { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 120px); font: 400 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #9aa3b5; pointer-events: none; background: rgba(13, 16, 23, .75); padding: 2px 7px; border-radius: 5px; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="status" class="panel">Starting…</div>
+  <div class="hint">Drag to orbit · add shadows and watch the draw calls · turn off mipmaps and look at the far floor</div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const status = document.getElementById('status');
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d1017);
+    scene.fog = new THREE.Fog(0x0d1017, 70, 160);
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.5, 400);
+    camera.position.set(0, 26, 52);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 0, 4);
+
+    scene.add(new THREE.HemisphereLight(0xc4d6ff, 0x2a2420, 1.6));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+    sun.position.set(30, 40, 15);
+    sun.shadow.camera.left = sun.shadow.camera.bottom = -45;
+    sun.shadow.camera.right = sun.shadow.camera.top = 45;
+    sun.shadow.camera.far = 120;
+    sun.shadow.bias = -0.0005;
+    scene.add(sun);
+
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x1b202b, roughness: 1 }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    // Our own frame stats. renderer.info is reset at the start of every render(),
+    // so we copy what we need right after rendering.
+    const perf = { fps: 0, frameMs: 0, cpuMs: 0, calls: 0, triangles: 0 };
+    let perfFrames = 0, perfCpu = 0, perfStart = performance.now();
+    function timed(work) {
+      const t0 = performance.now();
+      work();                                   // our updates + renderer.render()
+      perfCpu += performance.now() - t0;
+      perfFrames++;
+      perf.calls = renderer.info.render.calls;
+      perf.triangles = renderer.info.render.triangles;
+      const now = performance.now();
+      if (now - perfStart >= 500) {             // average over half a second
+        perf.frameMs = (now - perfStart) / perfFrames;
+        perf.fps = 1000 / perf.frameMs;
+        perf.cpuMs = perfCpu / perfFrames;
+        perfFrames = 0; perfCpu = 0; perfStart = now;
+        showStats();
+      }
+    }
+    const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + ' M' : n >= 1e4 ? (n / 1e3).toFixed(1) + ' K' : String(Math.round(n));
+    const timing = () => `frame      ${perf.frameMs.toFixed(1)} ms  (${perf.fps.toFixed(0)} fps)\nour JS     ${perf.cpuMs.toFixed(2)} ms per frame`;
+    // ---- the field: N small objects in four shapes and six colours ----
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    box.clearGroups();
+    const SHAPES = [
+      box,                                                          //  12 triangles
+      mergeVertices(new THREE.IcosahedronGeometry(0.62, 1)),        //  80 triangles
+      new THREE.TorusGeometry(0.42, 0.17, 10, 20),                  // 400 triangles
+      new THREE.ConeGeometry(0.55, 1.1, 16),                        //  48 triangles
+    ];
+    const PALETTE = [0xff6b6b, 0xffd166, 0x06d6a0, 0x4cc9f0, 0x9b8cff, 0xf4f1ea].map((c) => new THREE.Color(c));
+
+    // A seeded random generator, so every mode builds exactly the same field.
+    function random(seed) {
+      return () => {
+        seed = (seed + 0x6d2b79f5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function makeItems(count) {
+      const rnd = random(7), side = Math.ceil(Math.sqrt(count)), spacing = 80 / side, items = [];
+      for (let i = 0; i < count; i++) {
+        items.push({
+          shape: Math.floor(rnd() * 4),
+          color: Math.floor(rnd() * PALETTE.length),
+          x: ((i % side) + 0.5 + (rnd() - 0.5) * 0.4) * spacing - 40,
+          z: (Math.floor(i / side) + 0.5 + (rnd() - 0.5) * 0.4) * spacing - 40,
+          size: spacing * (0.42 + rnd() * 0.18),
+          phase: rnd() * Math.PI * 2,
+          spin: rnd() * Math.PI * 2,
+        });
+      }
+      return items;
+    }
+
+    // Where item i is at time t: it bobs up and down and turns slowly.
+    const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _e = new THREE.Euler();
+    function poseAt(item, t) {
+      _p.set(item.x, item.size * (0.6 + 0.6 * (1 + Math.sin(t * 1.6 + item.phase))), item.z);
+      _q.setFromEuler(_e.set(0.4, item.spin + t * 0.6, 0));
+      _s.setScalar(item.size);
+    }
+    function matrixAt(item, t, target) {
+      poseAt(item, t);
+      return target.compose(_p, _q, _s);
+    }
+    // ---- 3. InstancedMesh: one geometry, drawn many times with different matrices ----
+    // One InstancedMesh can only use one geometry, so we need one per shape: 4 draw calls.
+    function buildInstanced(items) {
+      const material = new THREE.MeshStandardMaterial({ roughness: 0.5 });
+      const group = new THREE.Group(), meshes = [];
+      const matrix = new THREE.Matrix4();
+      SHAPES.forEach((shape, s) => {
+        const mine = items.filter((item) => item.shape === s);
+        const mesh = new THREE.InstancedMesh(shape, material, mine.length);
+        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);   // we rewrite it every frame
+        mine.forEach((item, i) => {
+          mesh.setMatrixAt(i, matrixAt(item, 0, matrix));
+          mesh.setColorAt(i, PALETTE[item.color]);
+        });
+        mesh.computeBoundingSphere();           // culling uses this; it is not updated for you
+        mesh.castShadow = true;
+        meshes.push({ mesh, mine });
+        group.add(mesh);
+      });
+      return {
+        object: group,
+        update(t) {
+          for (const { mesh, mine } of meshes) {
+            mine.forEach((item, i) => mesh.setMatrixAt(i, matrixAt(item, t, matrix)));
+            mesh.instanceMatrix.needsUpdate = true;
+          }
+        },
+        dispose() { meshes.forEach(({ mesh }) => mesh.dispose()); material.dispose(); },
+      };
+    }
+    const field = buildInstanced(makeItems(3000));
+    scene.add(field.object);
+
+    // ---- a floor texture we can resize: a tile drawn on a canvas, repeated 60 times ----
+    let floorTexture = null;
+    function makeFloorTexture(size) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const g = canvas.getContext('2d');
+      g.fillStyle = '#2a3140'; g.fillRect(0, 0, size, size);
+      g.strokeStyle = '#8b97b0'; g.lineWidth = Math.max(1, size / 128);
+      for (let i = 0; i <= 8; i++) {
+        const p = (i / 8) * size;
+        g.beginPath(); g.moveTo(p, 0); g.lineTo(p, size); g.moveTo(0, p); g.lineTo(size, p); g.stroke();
+      }
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(60, 60);
+      return texture;
+    }
+    function applyTexture() {
+      floorTexture?.dispose();                  // free the old one on the GPU
+      floorTexture = makeFloorTexture(params.textureSize);
+      floorTexture.generateMipmaps = params.mipmaps;
+      floorTexture.minFilter = params.mipmaps ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+      floorTexture.anisotropy = params.anisotropy ? renderer.capabilities.getMaxAnisotropy() : 1;
+      ground.material.map = floorTexture;
+      ground.material.color.set(0xffffff);
+      ground.material.needsUpdate = true;
+    }
+
+    // ---- three point lights; each one that casts shadows renders the scene 6 more times ----
+    const points = [0xff9f6b, 0x6bd6ff, 0xc39bff].map((color, i) => {
+      const light = new THREE.PointLight(color, 120, 0, 2);
+      light.position.set(Math.cos(i * 2.1) * 20, 6, Math.sin(i * 2.1) * 20);
+      light.shadow.mapSize.set(512, 512);
+      scene.add(light);
+      return light;
+    });
+
+    const params = {
+      shadows: false, shadowMapSize: 2048, pointShadows: 0,
+      pixelRatio: renderer.getPixelRatio(), textureSize: 2048, mipmaps: true, anisotropy: true,
+    };
+    function applyShadows() {
+      renderer.shadowMap.enabled = params.shadows || params.pointShadows > 0;
+      sun.castShadow = params.shadows;
+      points.forEach((light, i) => light.castShadow = i < params.pointShadows);
+      if (sun.shadow.mapSize.x !== params.shadowMapSize) {
+        sun.shadow.mapSize.set(params.shadowMapSize, params.shadowMapSize);
+        sun.shadow.map?.dispose();              // the old shadow map has the old size;
+        sun.shadow.map = null;                  // drop it and three makes a new one
+      }
+      scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });   // shadows on/off changes the shaders
+    }
+    applyTexture();
+    applyShadows();
+
+    function showStats() {
+      const mb = (bytes) => (bytes / 1048576).toFixed(1) + ' MB';
+      const px = params.textureSize ** 2, mip = params.mipmaps ? 4 / 3 : 1;
+      const shadowPx = (params.shadows ? params.shadowMapSize ** 2 : 0) + params.pointShadows * 6 * 512 * 512;
+      const canvas = renderer.domElement;
+      status.innerHTML =
+        `<b>draw calls ${perf.calls}</b>   triangles ${fmt(perf.triangles)}\n` +
+        `(the scene is 5 draws; shadows add passes)\n\n` +
+        `<b>pixels</b>   canvas ${canvas.width} × ${canvas.height} = ${fmt(canvas.width * canvas.height)} px per pass\n` +
+        `<b>shadows</b>  ${fmt(shadowPx)} shadow-map px to fill per frame\n` +
+        `<b>floor</b>    ${params.textureSize}² RGBA8 = ${mb(px * 4 * mip)}${params.mipmaps ? ' with mipmaps' : ''}\n` +
+        `         as KTX2 (BC7/ASTC, 1 byte/px) ≈ ${mb(px * mip)}\n` +
+        `textures on the GPU: ${renderer.info.memory.textures}\n\n` + timing();
+    }
+
+    const gui = new GUI({ title: 'Step 6' });
+    const f1 = gui.addFolder('Pixels');
+    f1.add(params, 'pixelRatio', 0.25, 2, 0.25).name('pixel ratio').onChange((v) => { renderer.setPixelRatio(v); renderer.setSize(innerWidth, innerHeight); });
+    const f2 = gui.addFolder('Shadows');
+    f2.add(params, 'shadows').name('sun shadow').onChange(applyShadows);
+    f2.add(params, 'shadowMapSize', [512, 1024, 2048, 4096]).name('sun map size').onChange(applyShadows);
+    f2.add(params, 'pointShadows', 0, 3, 1).name('point shadows').onChange(applyShadows);
+    const f3 = gui.addFolder('Floor texture');
+    f3.add(params, 'textureSize', [256, 1024, 2048, 4096]).name('size').onChange(applyTexture);
+    f3.add(params, 'mipmaps').onChange(applyTexture);
+    f3.add(params, 'anisotropy').onChange(applyTexture);
+
+    let t = 0, last = 0;
+    renderer.setAnimationLoop((time) => {
+      t += Math.min((time - last) / 1000, 0.1);
+      last = time;
+      controls.update();
+      timed(() => {
+        field.update(t);
+        renderer.render(scene, camera);
+      });
+    });
+  </script>
+</body>
+</html>
