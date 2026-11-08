@@ -38,6 +38,11 @@ h2 span{font:500 13px var(--mono);color:var(--accent)}
 .meta-line{margin:14px 0 0;color:var(--dim);font:13px var(--mono)}
 .meta-line a,.eyebrow a{color:var(--accent2);text-decoration:none}
 .meta-line a:hover,.eyebrow a:hover{text-decoration:underline}
+.title-support{margin:12px 0 0;color:var(--muted);font:13px/1.55 var(--mono)}
+.title-support-link{white-space:nowrap}
+.title-support a{color:var(--accent2);text-decoration:underline;text-decoration-color:rgba(122,167,255,.45);text-underline-offset:2px}
+.title-support a:hover{text-decoration-color:var(--accent2)}
+.title-support a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
 section.list{padding:16px 0 64px}
 .posts{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
 .post-item{display:grid;grid-template-columns:130px 1fr;gap:18px;padding:18px 0;border-bottom:1px solid var(--line)}
