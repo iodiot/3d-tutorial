@@ -71,7 +71,7 @@ function layout({ title, desc, body, canonical, image = `${BASE}images/social-ca
 <meta property="og:image:width" content="1200"><meta property="og:image:height" content="${Number(imageHeight) || 630}">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d12'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' text-anchor='middle' fill='%237cf5d4'%3E3D%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="${BASE}assets/style.css?v=3">
+<link rel="stylesheet" href="${BASE}assets/style.css?v=4">
 </head>
 <body>
 <div class="bg"></div>
@@ -113,6 +113,13 @@ function supportBlock() {
 }
 
 const tagList = p => `<ul class="tags"><li class="topic">part ${p.part}</li>${p.tags.map(t => `<li>${esc(t)}</li>`).join('')}</ul>`;
+
+// Muted line under the article title on published parts 1–7 only.
+// The end-of-article supportBlock() markup is separate and stays as it is.
+function titleSupport(p) {
+  if (p.part < 1 || p.part > 7) return '';
+  return `<p class="title-support">Free series · Support it: <span class="title-support-link">☕ <a href="https://buymeacoffee.com/iodiot" target="_blank" rel="noopener">Buy Me a Coffee</a> ·</span> <span class="title-support-link">♥ <a href="https://github.com/sponsors/iodiot" target="_blank" rel="noopener">GitHub Sponsors</a></span></p>`;
+}
 
 function indexPage() {
   const liveItems = parts.map(p => `
@@ -159,6 +166,7 @@ function partPage(p) {
   <header class="post-head">
     <p class="eyebrow"><a href="${BASE}">← ${esc(series.title)} · all parts</a></p>
     <h1>${esc(p.title)}</h1>
+    ${titleSupport(p)}
     <p class="meta-line"><time datetime="${p.date.slice(0, 10)}">${fmtDate(p.date)}</time> · Mike Smahin</p>
     ${tagList(p)}
   </header>
