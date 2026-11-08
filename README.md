@@ -31,6 +31,12 @@ build.mjs                static site builder (markdown-it + highlight.js)
 
 Build: `npm install && npm run build` writes the site to `dist/`, which is published on the `gh-pages` branch.
 
+## Support
+
+If this saved you an hour, a coffee keeps the series going ☕
+
+[Buy Me a Coffee](https://buymeacoffee.com/iodiot) · [GitHub Sponsors](https://github.com/sponsors/iodiot)
+
 ## License
 
 Text and images © Mike Smahin. Demo and build code: MIT. Third-party assets used by the demos (the Part 3 fox model and HDR) keep their own licences, listed in [demos/part-3/CREDITS.md](demos/part-3/CREDITS.md).

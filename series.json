@@ -10,15 +10,20 @@
     }
   ],
   "support": {
-    "text": "This series is free. If it helped you, you can support it with a coffee.",
+    "text": "If this saved you an hour, a coffee keeps the series going ☕",
     "platforms": [
       {
         "name": "Buy Me a Coffee",
-        "url": "https://www.buymeacoffee.com/iodiot",
+        "url": "https://buymeacoffee.com/iodiot",
         "image": "https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png",
         "imageWidth": 181,
         "imageHeight": 50,
-        "label": "Buy Me A Coffee"
+        "label": "Buy Me a Coffee"
+      },
+      {
+        "name": "GitHub Sponsors",
+        "url": "https://github.com/sponsors/iodiot",
+        "label": "GitHub Sponsors"
       }
     ]
   }
